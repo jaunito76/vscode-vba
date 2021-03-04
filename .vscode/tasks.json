@@ -22,6 +22,14 @@
 			"problemMatcher": [],
 			"label": "npm: vscode:prepublish",
 			"detail": "npm run compile"
+		},
+		{
+			"type": "npm",
+			"script": "compile",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "npm: compile",
+			"detail": "tsc -p ./"
 		}
 	]
 }

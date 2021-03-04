@@ -103,14 +103,16 @@
   "Suberr": {
     "prefix": "Suberr",
     "body": [
-      "Sub ${1:subName}()",
-      "    '// add declarations",
-      "    On Error GoTo catch${1:subName}Error",
-      "exit${1:subName}Sub:",
+      "Sub ${1:subName}(${2:params})",
+      "    ",
+      "    On Error GoTo ${1:subName}Err",
+      "\t",
+      "${1:subName}Exit:",
       "    Exit Sub",
-      "catch${1:subName}Error:",
-      "    '// add error handling",
-      "    GoTo exit${1:subName}Sub",
+      "\t",
+      "${1:subName}Err:",
+      "    HandleErrors \"${3:ModuleName}.${1:functionName}()\"",
+      "    Resume ${1:subName}Exit",
       "End Sub"
     ],
     "description": "Sub code block with error handling"
@@ -118,14 +120,17 @@
   "Functionerr": {
     "prefix": "Functionerr",
     "body": [
-      "Function ${1:functionName}() As ${2:functionType}",
+      "Function ${1:functionName}(${2:parameters}) As ${3:functionType}",
       "    '// add declarations",
-      "    On Error GoTo catchError",
-      "exitFunction:",
+      "    On Error GoTo ${1:functionName}Err",
+      "    ${1:functionName} =                        'return value",
+      "\t",
+      "${1:functionName}Exit:",
       "    Exit Function",
-      "catchError:",
-      "    '// add error handling",
-      "    GoTo exitFunction",
+      "\t",
+      "${1:functionName}Err:",
+      "    HandleErrors \"${5:ModuleName}.${1:functionName}()\"",
+      "    Resume ${1:functionName}Exit",
       "End Function"
     ],
     "description": "Function code block with error handling"
