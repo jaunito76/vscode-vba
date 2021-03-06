@@ -153,5 +153,22 @@
       "MsgBox \"${1:msgPrompt}\", ${2:vbButtonType}, \"${3:msgTitle}\""
     ],
     "description": "Message box code block"
+  },
+  "commentp": {
+    "prefix": "comment",
+    "body":[
+      "' ************************************************************************************************************",
+      "' ${0:Procedure Name}",
+      "' ------------------------------------------------------------------------------------------------------------",
+      "' Purpose – ${1:briefly describe the purpose of the program}",
+      "' Input – ${2:list the name of each input variable and briefly describe}",
+      "' Output – ${3:listthe name of each output variable and briefly describe output produced}",
+      "' Other Key Variables – ${4:list other important variables by name and describe their usage}",
+      "' Author – ${5:person who wrote the program}",
+      "' Date created or revised – ${6:keep track of changes made to the program}",
+      "' Limitations – ${7:describe unusual conditions or limitations}",
+      "' ************************************************************************************************************"
+    ],
+    "description": "Comment Box for Procedure"
   }
 }
