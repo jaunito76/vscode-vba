@@ -7,3 +7,5 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ## [Unreleased]
 
 - Initial release
+- Edit to documentSymbolProvider allowing procedure to identify proper Sub/Function/Properties and include them in the outline
+- 
