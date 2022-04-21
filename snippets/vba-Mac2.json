@@ -1,0 +1,218 @@
+{
+  "Boolean": {
+    "prefix": "Dimb",
+    "body": ["Dim bol${1:varName} As Boolean"],
+    "description": "Boolean declaration"
+  },
+  "Integer": {
+    "prefix": "Dimi",
+    "body": ["Dim int${1:varName} As Integer"],
+    "description": "Integer declaration"
+  },
+  "Long": {
+    "prefix": "Diml",
+    "body": ["Dim lng${1:varName} As Long"],
+    "description": "Long declaration"
+  },
+  "Single": {
+    "prefix": "Dimsi",
+    "body": ["Dim sng${1:varName} As Single"],
+    "description": "Single declaration"
+  },
+  "Double": {
+    "prefix": "Dimd",
+    "body": ["Dim dbl${1:varName} As Double"],
+    "description": "Double declaration"
+  },
+  "Currency": {
+    "prefix": "Dimc",
+    "body": ["Dim cur${1:varName} As Currency"],
+    "description": "Currency declaration"
+  },
+  "Date": {
+    "prefix": "Dimdt",
+    "body": ["Dim dat${1:varName} As Date"],
+    "description": "Date declaration"
+  },
+  "String": {
+    "prefix": "Dims",
+    "body": ["Dim str${1:varName} As String"],
+    "description": "String declaration"
+  },
+  "Object": {
+    "prefix": "Dimo",
+    "body": ["Dim obj${1:varName} As Object"],
+    "description": "Object declaration"
+  },
+  "Variant": {
+    "prefix": "Dimv",
+    "body": ["Dim bol${1:varName} As Variant"],
+    "description": "Variant declaration"
+  },
+  "If": {
+    "prefix": "Ife",
+    "body": [
+      "If ${1:expression} Then",
+      "\t",
+      "ElseIf ${2:expression2} Then",
+      "\t",
+      "Else",
+      "\t",
+      "End If"
+    ],
+    "description": "If ElseIf Else code block"
+  },
+  "If2": {
+    "prefix": "If2",
+    "body": [
+      "If ${1:expression} Then",
+      "\t",
+      "End If"
+    ],
+    "description": "If ElseIf Else code block"
+  },
+  "Fori": {
+    "prefix":"Fori",
+    "body":[
+      "For ${1:iterator} = ${2:LowerBound} To ${3:UpperBound}",
+      "\t",
+      "Next ${1:iterator}"
+    ],
+    "description": "For loop with an iteration "
+  },
+  "ForEach": {
+    "prefix": "ForE",
+    "body": [
+      "For Each ${1:element} In ${2:group} ",
+      "\t",
+      "Next ${1:element}"
+    ],
+    "description": "For Each code block"
+  },
+  "DoLoopw": {
+    "prefix": "DoLoopw",
+    "body": ["Do", "\t", "Exit Do", "\t", "Loop While"],
+    "description": "Do Loop While code block"
+  },
+  "DoLoopu": {
+    "prefix": "DoLoopu",
+    "body": ["Do", "\t", "    Exit Do", "\t", "Loop Until"],
+    "description": "Do Loop Until code block"
+  },
+  "DoWhile": {
+    "prefix": "DoWhile",
+    "body": ["Do While ${1:condition}", "\t", "Loop"],
+    "description": "Do While Loop code block"
+  },
+  "DoUntil": {
+    "prefix": "DoUntil",
+    "body": ["Do Until ${1:condition}", "\t", "Loop"],
+    "description": "Do Until Loop code block"
+  },
+  "Sub with Error Handler": {
+    "prefix": "SubErrorHandler",
+    "body": [
+      "Sub ${1:subName}(${2:parameter} As ${3:type})",
+      "\t",
+      "    If GEN_DEBUGGING Then Debug.Print \"Entered ${4:ModuleName}.${1:functionName}() @\" & TimeInMS", 
+      "    On Error GoTo catch${1:subName}Error",
+      "\t",
+      "exit${1:subName}:",
+      "    If GEN_DEBUGGING Then Debug.Print \"Exited ${4:ModuleName}.${1:functionName}() @\" & TimeInMS",
+      "    Exit Sub",
+      "\t",
+      "catch${1:subName}Error:",
+      "    HandleError \"${4:ModuleName}.${1:subName}()\"",
+      "    GoTo exit${1:subName}",
+      "End Sub"
+    ],
+    "description": "Sub code block with error handling"
+  },
+  "Function with Error Handler": {
+    "prefix": "FunctionErrorHandler",
+    "body": [
+      "Function ${1:functionName}(${2:parameter} As ${3:type}) As ${4:functionType}",
+      "\t",
+      "    If GEN_DEBUGGING Then Debug.Print \"Entered ${5:ModuleName}.${1:functionName}() @\" & TimeInMS", 
+      "    On Error GoTo catch${1:functionName}Error",
+      "\t",
+      "    ${1:functionName} = ",
+      "\t",
+      "exit${1:functionName}:",
+      "    If GEN_DEBUGGING Then Debug.Print \"Exited ${5:ModuleName}.${1:functionName}() @\" & TimeInMS",
+      "    Exit Function",
+      "\t",
+      "catch${1:functionName}Error:",
+      "    '// add error handling",
+      "    HandleError \"${5:ModuleName}.${1:functionName}()\"",
+      "    GoTo exit${1:functionName}",
+      "End Function"
+    ],
+    "description": "Function code block with error handling"
+  },
+  "Select Case": {
+    "prefix": "SelectCase",
+    "body": [
+      "Select Case ${1:testexpression}",
+      "Case ${2:expressionlist-n}",
+      "    ${3:statements-n}",
+      "Case Else",
+      "    ${4:elsestatements}",
+      "End Select"
+    ],
+    "description": "Select Case code block"
+  },
+  "MsgBox": {
+    "prefix": "MsgBox",
+    "body": [
+      "MsgBox \"${1:msgPrompt}\", ${2:vbButtonType}, \"${3:msgTitle}\""
+    ],
+    "description": "Message box code block"
+  },
+  "Property Let Get": {
+    "prefix": "PropertyLetGet",
+    "body": [
+      "Property Let ${1:PropertyName}(${2:InputParameter} as ${3:ParameterType})",
+      "    p${2:InputParamater}${1:PropertyName} = ${2:InputParameter}",
+      "End Property",
+      "Property Get ${1:PropertyName}() as ${3:ParameterType}",
+      "    ${1:PropertyName} = p${2:InputParamater}${1:PropertyName}",
+      "End Property"
+    ],
+    "description":"Property Let and Get Code Snippets"
+  },
+  "Property Set Get": {
+    "prefix": "PropertySetGet",
+    "body": [
+      "Property Set ${1:PropertyName}(${2:InputParameter} As ${3:ParameterType})",
+      "    Set p${2:InputParamater}${1:PropertyName} = ${2:InputParameter}",
+      "End Property",
+      "Property Get ${1:PropertyName}() As ${3:ParameterType}",
+      "    Set ${1:PropertyName} = p${2:InputParamater}${1:PropertyName}",
+      "End Property"
+    ],
+    "description": "Property Set and Get Code Snippets"
+  },
+  "Property Get": {
+    "prefix": "PropertyGet",
+    "body": [
+      "Property Get ${1:PropertyName}() As ${3:ParameterType}",
+      "    ${1:PropertyName} = ${4:PrivatePropertyPrefix}${1:PropertyName}",
+      "End Property"
+    ],
+    "description": "Property Get Code Snippet for ReadOnly Property"
+  },
+  "Procedure Comment Block": {
+    "prefix":"commentp",
+    "body":[
+      "''' ***************************************************************************",
+      "''' * ${1:ProcedureName}",
+      "''' * Preconditions: ${2:Precondition Information}",
+      "''' * Input: ${3:Input Information}",
+      "''' * Output: ${4:Output Information}",
+      "''' * ${5:Description}",
+      "''' ***************************************************************************"
+    ],
+    "description":"A comment block snippet for above Properties/Subs/Functions"
+  }
+}
