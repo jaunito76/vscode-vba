@@ -3,9 +3,9 @@
     "Modified from the original ASP bundle. Originally modified by Thomas Aylott subtleGradient.com",
   "fileTypes": ["bas", "cls", "frm", "sht", "wbk"],
   "foldingStartMarker":
-    "(<(?i:(head|table|div|style|script|ul|ol|form|dl))\\b.*?>|\\{|^\\s*<?%?\\s*'?\\s*(?i:(sub|private\\s+Sub|public\\s+Sub|function|if|while|For))\\s*.*$)",
+    "(?i:^(?i:(?i:(?i:(?i:Private|Public|Friend)\\s+(?i:Sub|Function|Property))\\s\\b)(\\S+)(?i:\\b.*$))|(?i:(?i:If.+Then|Select Case|While|For|Do).*$))",
   "foldingStopMarker":
-    "(</(?i:(head|table|div|style|script|ul|ol|form|dl))>?|\\}|^\\s*<?%?\\s*\\s*'?\\s*(?i:(end|Next))\\s*.*$)",
+    "(^(?i:(End|Next|Wend|Loop)).*$)",
   "keyEquivalent": "^~A",
   "name": "VBA",
   "patterns": [
@@ -225,6 +225,41 @@
         }
       ]
     }
+  },
+  "brackets": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
+  ],
+  "autoClosingPairs": [
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "'", "close": "'", "notIn": ["string", "comment"] },
+    { "open": "\"", "close": "\"", "notIn": ["string"] },
+    { "open": "`", "close": "`", "notIn": ["string", "comment"] },
+    { "open": "/**", "close": " */", "notIn": ["string"] },
+    { "open": "<", "close": ">", "notIn": ["string", "comment"] }
+  ],
+  "autoCloseBefore": ";:.,=}])>` \n\t",
+  "surroundingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["'", "'"],
+    ["\"", "\""],
+    ["`", "`"]
+  ],
+  "folding": {
+    "markers": {
+      "start": "(?:^(?:(?:(?:(?i:Private|Public|Friend)\\s+(?i:Sub|Function|Property))\\s\\b)(\\S+)(?:\\b.*$))|(?i:(?i:If.+Then|Select Case|While|For|Do).*$))",
+      "end": "(^(?i:(End\\s(Sub|Function|Property)|Next|Wend|Loop)).*$)"
+    }
+  },
+  "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\#\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)",
+  "indentationRules": {
+    "increaseIndentPattern": "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
+    "decreaseIndentPattern": "^((?!.*?\\/\\*).*\\*/)?\\s*[\\}\\]].*$"
   },
   "scopeName": "source.vba",
   "uuid": "7F9C9343-D48E-4E7D-BFE8-F680714DCD3E"
