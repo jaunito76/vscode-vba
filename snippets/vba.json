@@ -106,12 +106,13 @@
       "Sub ${1:subName}(${2:params})",
       "    ",
       "    On Error GoTo ${1:subName}Err",
+      "    ${0:Start Here}",
       "\t",
       "${1:subName}Exit:",
       "    Exit Sub",
       "\t",
       "${1:subName}Err:",
-      "    HandleErrors \"${3:ModuleName}.${1:functionName}()\"",
+      "    HandleError \"${3:ModuleName}.${1:functionName}()\"",
       "    Resume ${1:subName}Exit",
       "End Sub"
     ],
@@ -121,15 +122,16 @@
     "prefix": "Functionerr",
     "body": [
       "Function ${1:functionName}(${2:parameters}) As ${3:functionType}",
-      "    '// add declarations",
+      "    ' Declarations",
       "    On Error GoTo ${1:functionName}Err",
+      "    ${0:Start Here}",
       "    ${1:functionName} =                        'return value",
       "\t",
       "${1:functionName}Exit:",
       "    Exit Function",
       "\t",
       "${1:functionName}Err:",
-      "    HandleErrors \"${5:ModuleName}.${1:functionName}()\"",
+      "    HandleError \"${5:ModuleName}.${1:functionName}()\"",
       "    Resume ${1:functionName}Exit",
       "End Function"
     ],
@@ -160,15 +162,39 @@
       "' ************************************************************************************************************",
       "' ${0:Procedure Name}",
       "' ------------------------------------------------------------------------------------------------------------",
-      "' Purpose – ${1:briefly describe the purpose of the program}",
-      "' Input – ${2:list the name of each input variable and briefly describe}",
-      "' Output – ${3:listthe name of each output variable and briefly describe output produced}",
-      "' Other Key Variables – ${4:list other important variables by name and describe their usage}",
-      "' Author – ${5:person who wrote the program}",
-      "' Date created or revised – ${6:keep track of changes made to the program}",
-      "' Limitations – ${7:describe unusual conditions or limitations}",
+      "' Purpose - ${1:briefly describe the purpose of the program}",
+      "' Input - ${2:list the name of each input variable and briefly describe}",
+      "' Output - ${3:listthe name of each output variable and briefly describe output produced}",
+      "' Other Key Variables - ${4:list other important variables by name and describe their usage}",
+      "' Author - ${5:person who wrote the program}",
+      "' Date created or revised - ${6:keep track of changes made to the program}",
+      "' Limitations - ${7:describe unusual conditions or limitations}",
       "' ************************************************************************************************************"
     ],
     "description": "Comment Box for Procedure"
+  },
+  "propl": {
+    "prefix": "Property Let & Get",
+    "body": [
+      "Property Let ${1:PropertyName}(${2:NewValueVariable} As ${3:DataType})",
+      "    p${2}${1} = ${2}",
+      "End Property",
+      "Property Get ${1}() As ${3}",
+      "    ${1} = p${2}${1}",
+      "End Property"
+    ],
+    "description": "Property Let and Get per standards"
+  },
+  "props": {
+    "prefix": "Property Set & Get",
+    "body": [
+      "Property Set ${1:PropertyName}(${2:NewValueVariable} As ${3:DataType})",
+      "    Set p${2}${1} = ${2}",
+      "End Property",
+      "Property Get ${1}() As ${3}",
+      "    Set ${1} = p${2}${1}",
+      "End Property"
+    ],
+    "description": "Property Set and Get per standards"
   }
 }
