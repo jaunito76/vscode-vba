@@ -20,9 +20,9 @@ export class VbaDocumentSymbolProvider implements vscode.DocumentSymbolProvider 
         for (let line = 0; line < document.lineCount; line++) {
             var text = document.lineAt(line);
             let matches = text.text.match(regexStart);
+            let myname: string ='';
+            let mysym: vscode.SymbolKind=vscode.SymbolKind.Null;
             if (matches) {
-                let myname;
-                let mysym;
                 switch (matches[5]) {
                     case 'Property':
                         myname = matches[9] + ' (' + matches[8]  + ')';
