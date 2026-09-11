@@ -242,6 +242,11 @@ function visitStmt(stmt: Stmt, v: Visitors): void {
 				visitExpr(arg, v);
 			}
 			return;
+		case 'FileIOStmt':
+			for (const expr of stmt.exprs) {
+				visitExpr(expr, v);
+			}
+			return;
 		default:
 			return;
 	}

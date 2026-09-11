@@ -157,6 +157,34 @@ class Parser {
 				this.advance();
 				return { kind: 'LabelStmt', name: t.text, range: Range.create(start, this.previousEnd()) };
 			}
+
+			// Open/Close/Print/Write/Input/Line Input/Get/Put aren't reserved
+			// keywords (so they stay available as ordinary identifiers
+			// everywhere else — a real VBA project can and does have its own
+			// Sub/variable named e.g. "Write"), but are recognized
+			// contextually here when their shape unambiguously matches VBA's
+			// file I/O statement forms.
+			const upper = t.value.toUpperCase();
+			if (upper === 'OPEN' && this.looksLikeOpenStatement()) {
+				return this.parseOpenStatement();
+			}
+			if (upper === 'CLOSE' && this.looksLikeCloseStatement()) {
+				return this.parseCloseStatement();
+			}
+			if (
+				(upper === 'PRINT' || upper === 'WRITE' || upper === 'INPUT' || upper === 'GET' || upper === 'PUT') &&
+				this.peekAt(1).kind === 'Punctuation' && this.peekAt(1).value === '#'
+			) {
+				return this.parseFileIOWithFileNumber(upper as 'PRINT' | 'WRITE' | 'INPUT' | 'GET' | 'PUT');
+			}
+			if (
+				upper === 'LINE' &&
+				this.peekAt(1).kind === 'Identifier' && this.peekAt(1).value.toUpperCase() === 'INPUT' &&
+				this.peekAt(2).kind === 'Punctuation' && this.peekAt(2).value === '#'
+			) {
+				return this.parseLineInputStatement();
+			}
+
 			return this.parseExpressionStatement();
 		}
 
@@ -945,6 +973,106 @@ class Parser {
 			type = this.parseTypeName();
 		}
 		return { target, type, range: Range.create(start, this.previousEnd()) };
+	}
+
+	// ---- file I/O -----------------------------------------------------------
+
+	/** True if a top-level `For` keyword appears before this logical line ends — distinguishes the Open statement from a user's own identically-named procedure/variable. */
+	private looksLikeOpenStatement(): boolean {
+		for (let i = 1; ; i++) {
+			const t = this.peekAt(i);
+			if (t.kind === 'NewLine' || t.kind === 'Colon' || t.kind === 'EOF') {
+				return false;
+			}
+			if (t.kind === 'Keyword' && t.value === 'FOR') {
+				return true;
+			}
+		}
+	}
+
+	/** Bare `Close` (closes every open file) or `Close #n[, #n...]` — anything else falls through to being treated as an ordinary identifier. */
+	private looksLikeCloseStatement(): boolean {
+		const next = this.peekAt(1);
+		if (next.kind === 'NewLine' || next.kind === 'Colon' || next.kind === 'EOF') {
+			return true;
+		}
+		return next.kind === 'Punctuation' && next.value === '#';
+	}
+
+	private parseOpenStatement(): Stmt {
+		const start = this.peek().range.start;
+		this.advance(); // OPEN
+		const exprs: Expr[] = [this.parseExpression()]; // path
+		if (this.checkKeyword('FOR')) {
+			this.advance();
+			// Mode (Input/Output/Append/Random/Binary) plus optional Access/
+			// Lock clauses are all just bare words here — none of them are
+			// expressions worth tracking, so skip to `As` generically rather
+			// than modeling each sub-clause.
+			while (!this.checkKeyword('AS') && !this.check('NewLine') && !this.check('Colon') && !this.isAtEnd()) {
+				this.advance();
+			}
+		}
+		if (this.checkKeyword('AS')) {
+			this.advance();
+			exprs.push(this.parseFileNumber());
+		}
+		if (this.peek().kind === 'Identifier' && this.peek().value.toUpperCase() === 'LEN') {
+			this.advance();
+			if (this.checkPunct('=')) {
+				this.advance();
+			}
+			exprs.push(this.parseExpression());
+		}
+		return { kind: 'FileIOStmt', op: 'OPEN', exprs, range: Range.create(start, this.previousEnd()) };
+	}
+
+	private parseCloseStatement(): Stmt {
+		const start = this.peek().range.start;
+		this.advance(); // CLOSE
+		const exprs: Expr[] = [];
+		if (!this.check('NewLine') && !this.check('Colon') && !this.isAtEnd()) {
+			exprs.push(this.parseFileNumber());
+			while (this.checkPunct(',')) {
+				this.advance();
+				exprs.push(this.parseFileNumber());
+			}
+		}
+		return { kind: 'FileIOStmt', op: 'CLOSE', exprs, range: Range.create(start, this.previousEnd()) };
+	}
+
+	private parseFileIOWithFileNumber(op: 'PRINT' | 'WRITE' | 'INPUT' | 'GET' | 'PUT'): Stmt {
+		const start = this.peek().range.start;
+		this.advance(); // PRINT | WRITE | INPUT | GET | PUT
+		const exprs: Expr[] = [this.parseFileNumber()];
+		while (this.checkPunct(',') || this.checkPunct(';')) {
+			this.advance();
+			if (this.checkPunct(',') || this.checkPunct(';') || this.check('NewLine') || this.check('Colon') || this.isAtEnd()) {
+				continue; // omitted argument, e.g. `Get #1, , var`
+			}
+			exprs.push(this.parseExpression());
+		}
+		return { kind: 'FileIOStmt', op, exprs, range: Range.create(start, this.previousEnd()) };
+	}
+
+	private parseLineInputStatement(): Stmt {
+		const start = this.peek().range.start;
+		this.advance(); // LINE
+		this.advance(); // INPUT
+		const exprs: Expr[] = [this.parseFileNumber()];
+		if (this.checkPunct(',')) {
+			this.advance();
+			exprs.push(this.parseExpression());
+		}
+		return { kind: 'FileIOStmt', op: 'LINE_INPUT', exprs, range: Range.create(start, this.previousEnd()) };
+	}
+
+	/** An optional leading `#` (VBA allows `As #1` / `As 1` and `Close #1` / `Close 1` interchangeably) followed by the file-number expression. */
+	private parseFileNumber(): Expr {
+		if (this.checkPunct('#')) {
+			this.advance();
+		}
+		return this.parseExpression();
 	}
 
 	// ---- expressions --------------------------------------------------------

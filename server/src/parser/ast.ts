@@ -188,7 +188,8 @@ export type Stmt =
 	| ExitStmt
 	| GoToStmt
 	| ResumeStmt
-	| RaiseEventStmt;
+	| RaiseEventStmt
+	| FileIOStmt;
 
 /** Wraps a span of tokens skipped during panic-mode error recovery. */
 export interface ErrorStatement {
@@ -384,6 +385,22 @@ export interface ResumeStmt {
 	kind: 'ResumeStmt';
 	mode: 'Next' | 'Label' | 'Bare';
 	label?: string;
+	range: Range;
+}
+
+/**
+ * VBA's file I/O statements: Open/Close and the #-file-number-prefixed
+ * Print/Write/Input/Line Input/Get/Put. There's no downstream feature that
+ * needs deep structure here (no diagnostics/hover/definition cares what's
+ * inside an Open statement) — `exprs` just holds every sub-expression
+ * (path, file number, record length, output values, ...) in source order,
+ * purely so identifiers used inside them still participate in Option
+ * Explicit and reference resolution like anywhere else.
+ */
+export interface FileIOStmt {
+	kind: 'FileIOStmt';
+	op: 'OPEN' | 'CLOSE' | 'PRINT' | 'WRITE' | 'INPUT' | 'LINE_INPUT' | 'GET' | 'PUT';
+	exprs: Expr[];
 	range: Range;
 }
 

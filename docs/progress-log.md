@@ -385,3 +385,49 @@ Fixed three things:
   crashed, the `diagnostics.ts` level too; the cross-module hover
   doc-comment crash. Re-ran the full 176-file real-codebase pass clean
   afterward — zero errors.
+
+## Post-milestone-1 fix: no support for VBA's file I/O statements at all (2026-09-11)
+
+The user reported `PushCallStack` (a real, `Public`-by-default Sub) being
+flagged "Variable not defined" despite living in `B_HandleErrors.bas`.
+Checked that file directly: `bindModule` found only 3 procedures in it
+(should be 9), with 12 syntax diagnostics starting at line 83 —
+`PushCallStack`, declared at line 137, was never even reaching the
+procedures map.
+
+Root cause: the parser had zero grammar for VBA's file I/O statements —
+`Open ... For ... As #n`, `Close`, and the `#`-file-number-prefixed
+`Print`/`Write`/`Input`/`Line Input`/`Get`/`Put`. None of `Open`, `For`
+(as a bare word here, not a loop), `As`, or `#` in this context are
+handled together as one statement, so `Open logFilePath For Append As
+#intFileNum` (line 84) got torn apart token-by-token into completely
+unrelated grammar: `Open logFilePath` became a call to a nonexistent
+"Open" procedure, then the leftover `For Append As #intFileNum` got
+picked up fresh as if it were a `For` **loop** header (`Append` as the
+loop variable, `As` misread as a value, `#` as a stray unexpected token) —
+and that bogus loop's body swallowed every statement after it, looking
+for a `Next` that would never come, until the file ran out. `PushCallStack`
+wasn't broken; it was just never reached as a *statement*, buried inside
+the body of a loop that was never really there.
+
+Fixed with real, if intentionally shallow, support for these forms in
+`server/src/parser/{ast.ts,parser.ts}` — one `FileIOStmt` AST node
+(`op` + every sub-expression in source order; nothing downstream needs
+deeper structure than that) covering `Open`/`Close`/`Print #`/`Write #`/
+`Input #`/`Line Input #`/`Get #`/`Put #`. None of these are reserved
+keywords — `Write`, `Input`, `Get`, `Put`, etc. are all plausible
+real-world identifier names, and making them keywords unconditionally
+would have broken every other use of those words — so each is recognized
+contextually, gated on an unambiguous shape: the five `#`-prefixed forms
+require the very next token to literally be `#` (essentially zero
+ambiguity risk with an identifier use), `Open` requires a top-level `For`
+keyword before the logical line ends, and bare `Close` is accepted
+as-is (a real, if rare, ambiguity with a same-named user procedure —
+called out directly in the test coverage rather than pretending it's
+fully resolved).
+
+Verified directly against the exact file that triggered the report:
+`B_HandleErrors.bas` now binds with 0 diagnostics (was 12+) and all 9 real
+procedures found (was 3), `PushCallStack` included. Added 2 new parser
+tests (100 total) and re-ran the full 176-file real-codebase pipeline
+pass clean.

@@ -170,6 +170,54 @@ suite('Parser', () => {
 		assert.ok(module.body.some(s => s.kind === 'DeclareStmt'));
 	});
 
+	test('parses Open/Close and #-file-number I/O statements without corrupting subsequent code', () => {
+		// Regression test for a real production bug: none of these were
+		// recognized at all, so `Open ... For Append As #n` got misparsed as
+		// a call to a nonexistent "Open" followed by an unrelated For loop,
+		// swallowing every statement after it (including whole procedures)
+		// into that bogus loop's body looking for a Next that never came.
+		const source =
+			'Sub WriteLog()\n' +
+			'    Dim n As Integer\n' +
+			'    n = FreeFile\n' +
+			'    Open "log.txt" For Append As #n\n' +
+			'    Print #n, "hello", x\n' +
+			'    Write #n, y\n' +
+			'    Close #n\n' +
+			'End Sub\n' +
+			'\n' +
+			'Sub ReadLog()\n' +
+			'    Dim n As Integer, line As String\n' +
+			'    n = FreeFile\n' +
+			'    Open "log.txt" For Input As #n\n' +
+			'    Line Input #n, line\n' +
+			'    Close\n' +
+			'End Sub\n' +
+			'\n' +
+			'Public Sub AfterFileIO()\n' +
+			'End Sub\n';
+		const { module, diagnostics } = parse(source);
+		assert.deepStrictEqual(diagnostics, []);
+
+		const procs = procedures(module.body);
+		assert.deepStrictEqual(procs.map(p => p.name), ['WriteLog', 'ReadLog', 'AfterFileIO']);
+
+		const fileIOKinds = procs[0].body.filter(s => s.kind === 'FileIOStmt').map(s => (s as { op: string }).op);
+		assert.deepStrictEqual(fileIOKinds, ['OPEN', 'PRINT', 'WRITE', 'CLOSE']);
+	});
+
+	test('does not treat "Open"/"Close" used as ordinary identifiers as file I/O statements', () => {
+		const { module, diagnostics } = parse(
+			'Sub Foo()\n' +
+			'    Open 1, 2\n' + // no "For" -> not the Open statement
+			'    Close\n' + // bare Close is still ambiguous in real VBA too; accept ambiguity here
+			'End Sub\n'
+		);
+		assert.deepStrictEqual(diagnostics, []);
+		const [proc] = procedures(module.body);
+		assert.strictEqual(proc.body[0].kind, 'CallStmt');
+	});
+
 	test('joins a continued statement across lines', () => {
 		const { module, diagnostics } = parse('Dim x As _\n    Integer\n');
 		assert.deepStrictEqual(diagnostics, []);
