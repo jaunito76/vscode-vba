@@ -485,8 +485,16 @@ class Parser {
 		this.skipStatementSeparators();
 		const fields: VarDecl[] = [];
 		while (!this.checkKeyword('END') && !this.isAtEnd()) {
+			const before = this.pos;
 			fields.push(this.parseOneVarDecl());
 			this.skipStatementSeparators();
+			if (this.pos === before) {
+				// A token expectIdentifierLike() couldn't accept and nothing
+				// else in this pass consumed either — force progress so an
+				// unrecognized field never loops here forever.
+				this.error(`Unexpected token '${this.peek().text}'`, this.peek().range);
+				this.advance();
+			}
 		}
 		this.expectKeyword('END');
 		this.expectKeyword('TYPE');
@@ -502,6 +510,7 @@ class Parser {
 		this.skipStatementSeparators();
 		const members: EnumMember[] = [];
 		while (!this.checkKeyword('END') && !this.isAtEnd()) {
+			const before = this.pos;
 			const mStart = this.peek().range.start;
 			const mName = this.expectIdentifierLike();
 			const mNameRange = Range.create(mStart, this.previousEnd());
@@ -512,6 +521,10 @@ class Parser {
 			}
 			members.push({ name: mName, nameRange: mNameRange, value, range: Range.create(mStart, this.previousEnd()) });
 			this.skipStatementSeparators();
+			if (this.pos === before) {
+				this.error(`Unexpected token '${this.peek().text}'`, this.peek().range);
+				this.advance();
+			}
 		}
 		this.expectKeyword('END');
 		this.expectKeyword('ENUM');

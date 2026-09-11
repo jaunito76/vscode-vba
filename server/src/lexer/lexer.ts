@@ -83,6 +83,12 @@ export class Lexer {
 				continue;
 			}
 
+			if (ch === '[') {
+				this.scanBracketedIdentifier();
+				this.atStatementStart = false;
+				continue;
+			}
+
 			this.scanPunctuation();
 			this.atStatementStart = false;
 		}
@@ -142,6 +148,28 @@ export class Lexer {
 		const kind: TokenKind = KEYWORDS.has(upper) ? 'Keyword' : 'Identifier';
 		this.pushRange(kind, text, kind === 'Keyword' ? upper : text, start, this.currentPos());
 		this.atStatementStart = false;
+	}
+
+	/**
+	 * `[Name]` — VBA's bracket-escaping for an identifier that wouldn't
+	 * otherwise be legal (most commonly one starting with `_`, e.g. the
+	 * `[_First]`/`[_Last]` sentinel pattern real-world enums use for
+	 * iteration bounds). Semantically just an identifier: the brackets
+	 * are discarded rather than kept as part of the name, so `[_First]`
+	 * resolves identically to a plain `_First` reference elsewhere.
+	 */
+	private scanBracketedIdentifier(): void {
+		const start = this.currentPos();
+		this.advanceChar(); // '['
+		let value = '';
+		while (!this.isAtEnd() && this.peekChar() !== ']' && this.peekChar() !== '\r' && this.peekChar() !== '\n') {
+			value += this.peekChar();
+			this.advanceChar();
+		}
+		if (this.peekChar() === ']') {
+			this.advanceChar();
+		}
+		this.pushRange('Identifier', value, value, start, this.currentPos());
 	}
 
 	private scanString(): void {

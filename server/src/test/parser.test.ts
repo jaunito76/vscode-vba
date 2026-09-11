@@ -203,6 +203,51 @@ suite('Parser', () => {
 		assert.strictEqual(afterError.body[1].kind, 'AssignStmt');
 	});
 
+	test('parses [_First]/[_Last] bracket-escaped enum members', () => {
+		const { module, diagnostics } = parse(
+			'Public Enum ApproachType\n' +
+			'    [_First]\n' +
+			'    ILS\n' +
+			'    [_Last]\n' +
+			'End Enum\n'
+		);
+		assert.deepStrictEqual(diagnostics, []);
+		const enumDecl = module.body.find(s => s.kind === 'EnumDecl');
+		assert.strictEqual(enumDecl?.kind, 'EnumDecl');
+		if (enumDecl?.kind === 'EnumDecl') {
+			assert.deepStrictEqual(enumDecl.members.map(m => m.name), ['_First', 'ILS', '_Last']);
+		}
+	});
+
+	test('never loops forever on a token an Enum/Type body can\'t make into a member', function () {
+		// Regression test for a real production bug: a token
+		// expectIdentifierLike() rejects (here `@`, standing in for whatever
+		// unrecognized construct a real file might contain) that is also not
+		// '=', ':', or a newline sails straight through every branch of the
+		// Enum-body loop without being consumed. The loop had no progress
+		// guard, so this was a genuine infinite loop that grew its
+		// diagnostics/members arrays without bound until the process ran out
+		// of memory — a bracket-escaped enum member ([_First]) hit exactly
+		// this before bracket support was added to the lexer.
+		this.timeout(2000);
+		const { diagnostics } = parse(
+			'Public Enum Broken\n' +
+			'    @ @ @\n' +
+			'End Enum\n'
+		);
+		assert.ok(diagnostics.length < 100, 'diagnostics should stay bounded, not grow without limit');
+	});
+
+	test('never loops forever on a token a Type body can\'t make into a field', function () {
+		this.timeout(2000);
+		const { diagnostics } = parse(
+			'Private Type Broken\n' +
+			'    @ @ @\n' +
+			'End Type\n'
+		);
+		assert.ok(diagnostics.length < 100, 'diagnostics should stay bounded, not grow without limit');
+	});
+
 	test('handles a large module (thousands of lines) within the debounce window', function () {
 		this.timeout(5000);
 

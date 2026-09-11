@@ -263,3 +263,62 @@ Two independent bugs, both in the Phase 3 workspace scan:
 - Verified via the same manual fork-and-handshake technique used to
   diagnose it: `initialize` now responds in ~300ms scanning this repo's
   own folder, regardless of what the workspace scan is doing.
+
+## Post-milestone-1 fix: the OOM was actually a parser infinite loop, not the scan (2026-09-11)
+
+The fix above was real and worth keeping, but the user's crash **persisted
+after it** — still a hard OOM, no longer "the client gives up before the
+scan finishes" but "the server hangs and never responds at all." That ruled
+the scan back out as a red herring (confirmed directly: `findVbaFiles`
+against the user's actual ~100K-line, 176-file, 459-directory real codebase
+completed in 201ms with `truncated: false` — nowhere near the file/time
+caps). The user then gave direct access to the real repository being
+tested against, which made root-causing this by evidence rather than
+guesswork possible.
+
+Ran the compiled `parse()` directly against all 176 real `.bas`/`.cls`
+files from that repo, logging each one before parsing it (so a hang would
+show exactly which file it stalled on) — found it immediately:
+`Classes\CApproach.cls`, 6KB, hung and then OOM'd.
+
+Root cause: the file declares `Public Enum ApproachType` with sentinel
+members `[_First]` and `[_Last]` — VBA's `[Name]` bracket-escaping for an
+identifier that wouldn't otherwise be legal (here, one starting with `_`;
+a common real-world pattern for enum iteration-bound sentinels). The lexer
+had no support for `[...]` at all, so `[` fell through to
+`scanPunctuation()` as its own token. In `parseEnumDecl`'s member loop,
+hitting a bare `[` made `expectIdentifierLike()` fail *without consuming
+anything*, and — unlike every other loop in the parser — this loop had no
+progress guard. Every subsequent iteration re-examined the exact same `[`
+token: same failed identifier, same empty-name member pushed, same
+diagnostic pushed, loop condition still true. A genuine infinite loop that
+grew the `members` and `diagnostics` arrays without bound until the
+process ran out of heap — nothing to do with the workspace scan, the LSP
+handshake, or anything Phase-3-shaped; a plain Phase-1 parser bug that
+none of the (synthetic, not real-world) parser tests happened to exercise.
+
+Fixed two ways:
+- `server/src/lexer/lexer.ts`: real support for `[Name]` — scans to a
+  matching `]` and emits a single `Identifier` token, brackets discarded
+  (semantically `[_First]` just *is* `_First`; the brackets are pure
+  escaping syntax with no independent meaning elsewhere in the language).
+- `server/src/parser/parser.ts`: added the same `before = this.pos; ...;
+  if (this.pos === before) { advance(); }` progress guard `parseBlockBody`
+  already had, to `parseTypeDecl`'s and `parseEnumDecl`'s member loops —
+  defense in depth, so *any* future token those loops don't know how to
+  handle degrades to a diagnostic-and-skip instead of a repeat of this
+  exact class of bug.
+- 5 new tests: lexer coverage for `[Name]`, a parser test asserting
+  `[_First]`/`[_Last]` now parse as real enum members, and two explicit
+  regression tests (Enum and Type bodies) proving an unrecognized token
+  can no longer loop forever, bounded by a 2-second mocha timeout.
+- Re-verified against all 176 real files from the user's actual codebase
+  directly (not just the unit suite) — every one now parses in low single-
+  digit milliseconds, `CApproach.cls` included.
+
+The concrete lesson for this project going forward: the synthetic test
+fixtures, however extensive, don't substitute for throwing the parser at
+real-world VBA — this bug lived in code that had "passed" every Phase 1/3
+test. Real-codebase smoke testing (as done here, informally, against a
+user-supplied directory) is worth turning into a standing practice before
+calling a parser change done, not just when something has already broken.

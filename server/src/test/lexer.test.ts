@@ -97,6 +97,14 @@ suite('Lexer', () => {
 		assert.strictEqual(date.value, '1/1/2020');
 	});
 
+	test('parses [Name] bracket-escaped identifiers, discarding the brackets', () => {
+		const tokens = nonTrivia(tokenize('[_First]'));
+		assert.strictEqual(tokens.length, 1);
+		assert.strictEqual(tokens[0].kind, 'Identifier');
+		assert.strictEqual(tokens[0].text, '_First');
+		assert.strictEqual(tokens[0].value, '_First');
+	});
+
 	test('emits an EOF token even for empty input', () => {
 		const tokens = tokenize('');
 		assert.strictEqual(tokens.length, 1);

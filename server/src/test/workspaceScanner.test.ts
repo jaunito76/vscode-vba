@@ -52,7 +52,7 @@ suite('workspaceScanner', () => {
 			for (let i = 0; i < 10; i++) {
 				fs.writeFileSync(path.join(root, `Module${i}.bas`), '');
 			}
-			const { files, truncated } = findVbaFiles(root, 5);
+			const { files, truncated } = findVbaFiles(root, { maxFiles: 5 });
 			assert.strictEqual(truncated, true);
 			assert.strictEqual(files.length, 5);
 		} finally {
