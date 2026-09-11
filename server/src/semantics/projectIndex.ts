@@ -12,6 +12,8 @@ interface GlobalVarEntry {
 	moduleUri: string;
 	name: string;
 	type?: string;
+	/** Module vars and consts share this one global table; this says which source map to re-look-up the decl in. */
+	isConst: boolean;
 }
 
 /**
@@ -85,13 +87,13 @@ export class ProjectIndex {
 				if (v.access === 'PRIVATE') {
 					continue;
 				}
-				this.globalVars.set(key, { moduleUri: info.uri, name: v.decl.name, type: v.decl.type });
+				this.globalVars.set(key, { moduleUri: info.uri, name: v.decl.name, type: v.decl.type, isConst: false });
 			}
 			for (const [key, c] of info.consts) {
 				if (c.access === 'PRIVATE') {
 					continue;
 				}
-				this.globalVars.set(key, { moduleUri: info.uri, name: c.decl.name, type: c.decl.type });
+				this.globalVars.set(key, { moduleUri: info.uri, name: c.decl.name, type: c.decl.type, isConst: true });
 			}
 		}
 
@@ -149,7 +151,21 @@ export class ProjectIndex {
 		}
 		const globalVar = this.globalVars.get(upper);
 		if (globalVar) {
-			return { kind: 'Var', name: globalVar.name, type: globalVar.type, moduleUri: globalVar.moduleUri, decl: this.modules.get(globalVar.moduleUri)!.moduleVars.get(upper)!.decl };
+			const owningModule = this.modules.get(globalVar.moduleUri);
+			if (globalVar.isConst) {
+				const constInfo = owningModule?.consts.get(upper);
+				if (constInfo) {
+					return { kind: 'Const', name: globalVar.name, moduleUri: globalVar.moduleUri, decl: constInfo.decl };
+				}
+			} else {
+				const varInfo = owningModule?.moduleVars.get(upper);
+				if (varInfo) {
+					return { kind: 'Var', name: globalVar.name, type: globalVar.type, moduleUri: globalVar.moduleUri, decl: varInfo.decl };
+				}
+			}
+			// The global table entry outlived its owning module/declaration
+			// (e.g. a re-index raced this lookup) — resolve to nothing rather
+			// than guess or throw.
 		}
 		const formUri = this.formInstances.get(upper);
 		if (formUri) {

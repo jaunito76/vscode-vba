@@ -62,6 +62,29 @@ connection.onInitialized(() => {
 	}
 });
 
+/**
+ * A bug in any one feature must never take the whole server process down —
+ * that disconnects every open file's language support at once, and (per an
+ * earlier real incident) the client only restarts a crashing server a
+ * handful of times before giving up on it entirely for the session. Every
+ * request handler and the background re-index below runs through this:
+ * catch, log to the "VBA Language Server" output channel, surface a toast
+ * so a failure is never silently invisible, and fail that one request/pass
+ * rather than the process.
+ */
+function guard<T>(context: string, fallback: T, fn: () => T): T {
+	try {
+		return fn();
+	} catch (error) {
+		const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+		connection.console.error(`[${context}] ${message}`);
+		void connection.window.showErrorMessage(
+			`VBA Language Server: ${context} failed unexpectedly and was skipped — see the "VBA Language Server" output channel for details.`
+		);
+		return fallback;
+	}
+}
+
 function indexWorkspaceFolder(folderUri: string): void {
 	const rootPath = URI.parse(folderUri).fsPath;
 	const { files, truncated } = findVbaFiles(rootPath);
@@ -69,8 +92,13 @@ function indexWorkspaceFolder(folderUri: string): void {
 		try {
 			const content = fs.readFileSync(filePath, 'utf8');
 			projectIndex.updateModule(URI.file(filePath).toString(), content);
-		} catch {
-			// Unreadable file (permissions, disappeared mid-scan): skip it.
+		} catch (error) {
+			// Unreadable file (permissions, disappeared mid-scan) or an
+			// unexpected parser failure on this one file: skip it, but log
+			// it — silently losing a module from the index without a trace
+			// is its own kind of confusing bug report later.
+			const message = error instanceof Error ? error.message : String(error);
+			connection.console.error(`[Workspace scan] skipped "${filePath}": ${message}`);
 		}
 	}
 	if (truncated) {
@@ -82,45 +110,40 @@ function indexWorkspaceFolder(folderUri: string): void {
 	}
 }
 
-connection.onDocumentSymbol((params: DocumentSymbolParams) => {
-	const document = documents.get(params.textDocument.uri);
-	if (!document) {
-		return [];
-	}
-	return getDocumentSymbols(document);
-});
+connection.onDocumentSymbol((params: DocumentSymbolParams) =>
+	guard('Document Symbols', [], () => {
+		const document = documents.get(params.textDocument.uri);
+		return document ? getDocumentSymbols(document) : [];
+	})
+);
 
-connection.onSignatureHelp((params: SignatureHelpParams) => {
-	const document = documents.get(params.textDocument.uri);
-	if (!document) {
-		return undefined;
-	}
-	return getSignatureHelp(document, params.position);
-});
+connection.onSignatureHelp((params: SignatureHelpParams) =>
+	guard('Signature Help', undefined, () => {
+		const document = documents.get(params.textDocument.uri);
+		return document ? getSignatureHelp(document, params.position) : undefined;
+	})
+);
 
-connection.onHover((params: HoverParams) => {
-	const document = documents.get(params.textDocument.uri);
-	if (!document) {
-		return undefined;
-	}
-	return getHover(document, params.position, projectIndex);
-});
+connection.onHover((params: HoverParams) =>
+	guard('Hover', undefined, () => {
+		const document = documents.get(params.textDocument.uri);
+		return document ? getHover(document, params.position, projectIndex) : undefined;
+	})
+);
 
-connection.onDefinition((params: DefinitionParams) => {
-	const document = documents.get(params.textDocument.uri);
-	if (!document) {
-		return undefined;
-	}
-	return getDefinition(document, params.position, projectIndex);
-});
+connection.onDefinition((params: DefinitionParams) =>
+	guard('Go to Definition', undefined, () => {
+		const document = documents.get(params.textDocument.uri);
+		return document ? getDefinition(document, params.position, projectIndex) : undefined;
+	})
+);
 
-connection.onReferences((params: ReferenceParams) => {
-	const document = documents.get(params.textDocument.uri);
-	if (!document) {
-		return undefined;
-	}
-	return getReferences(document, params.position, projectIndex, params.context.includeDeclaration);
-});
+connection.onReferences((params: ReferenceParams) =>
+	guard('Find References', undefined, () => {
+		const document = documents.get(params.textDocument.uri);
+		return document ? getReferences(document, params.position, projectIndex, params.context.includeDeclaration) : undefined;
+	})
+);
 
 // Real VBA modules run thousands of lines, so re-indexing on every keystroke
 // is debounced; "latest wins" — a pending reparse is cancelled and replaced
@@ -139,12 +162,14 @@ documents.onDidChangeContent((change: TextDocumentChangeEvent<TextDocument>) => 
 		uri,
 		setTimeout(() => {
 			pendingReindex.delete(uri);
-			const document = documents.get(uri);
-			if (!document) {
-				return;
-			}
-			const moduleInfo = projectIndex.updateModule(uri, document.getText());
-			connection.sendDiagnostics({ uri, diagnostics: getDiagnostics(moduleInfo, projectIndex) });
+			guard('Re-index / Diagnostics', undefined, () => {
+				const document = documents.get(uri);
+				if (!document) {
+					return;
+				}
+				const moduleInfo = projectIndex.updateModule(uri, document.getText());
+				connection.sendDiagnostics({ uri, diagnostics: getDiagnostics(moduleInfo, projectIndex) });
+			});
 		}, REINDEX_DEBOUNCE_MS)
 	);
 });
@@ -162,12 +187,16 @@ connection.onDidChangeWatchedFiles((params: DidChangeWatchedFilesParams) => {
 		if (documents.get(change.uri)) {
 			continue; // an open document's edits are handled by onDidChangeContent
 		}
+		const filePath = URI.parse(change.uri).fsPath;
+		let content: string;
 		try {
-			const filePath = URI.parse(change.uri).fsPath;
-			projectIndex.updateModule(change.uri, fs.readFileSync(filePath, 'utf8'));
+			content = fs.readFileSync(filePath, 'utf8');
 		} catch {
-			// File may have been removed between the event and this read.
+			continue; // File may have been removed between the event and this read.
 		}
+		guard('Re-index (file watcher)', undefined, () => {
+			projectIndex.updateModule(change.uri, content);
+		});
 	}
 });
 

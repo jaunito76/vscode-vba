@@ -322,3 +322,66 @@ real-world VBA — this bug lived in code that had "passed" every Phase 1/3
 test. Real-codebase smoke testing (as done here, informally, against a
 user-supplied directory) is worth turning into a standing practice before
 calling a parser change done, not just when something has already broken.
+
+## Post-milestone-1 fix: server crash-loop, a resolver NPE, and no crash visibility (2026-09-11)
+
+Rebuilding with the previous fix, the OOM was gone — but the user still hit
+a hard crash, now a clean, immediate `TypeError`, which is real progress:
+it means whatever was left is a plain, traceable bug rather than a runaway
+loop. The stack trace pointed straight at `ProjectIndex.resolveUnqualified`.
+
+Root cause: module-level `Dim` vars and `Const`s share one internal
+`globalVars` table (both populate the project-wide global namespace the
+same way), but the map only ever recorded a plain `{moduleUri, name,
+type}` — nothing said *which* of the two source maps (`moduleVars` vs
+`consts`) a given entry actually came from. The resolution code always
+looked the name back up in `moduleVars`, unconditionally. The moment
+*any* code anywhere in the project referenced a `Public Const` declared in
+a different module — extremely common, this is what constants are for —
+that lookup returned `undefined` and `.decl` on it threw, taking the
+whole server process down. This is exactly the kind of bug the `guard()`
+wrapper below is meant to contain, but at the time it didn't exist yet, so
+one crash became a crash-loop: the client restarts a dying server a
+handful of times before giving up on it for the rest of the session,
+which is what the user was actually seeing.
+
+Fixed three things:
+
+- `server/src/semantics/projectIndex.ts`: `GlobalVarEntry` now carries an
+  `isConst` flag set correctly at merge time, and `resolveUnqualified`
+  looks the declaration back up in the matching source map — `consts` for
+  a Const, `moduleVars` for a Var — returning the correctly-shaped
+  `ResolvedSymbol` (`Const` vs `Var`) either way. If the owning module or
+  declaration has somehow gone missing (a re-index race), it now resolves
+  to nothing rather than guessing or throwing, matching every other
+  resolution path in this file.
+- `server/src/server.ts`: added a `guard()` wrapper — catch, log to the
+  "VBA Language Server" output channel, show an error toast, return a safe
+  fallback — around every request handler (`onDocumentSymbol`,
+  `onSignatureHelp`, `onHover`, `onDefinition`, `onReferences`) and the
+  debounced re-index/diagnostics pass (the exact callback that crashed
+  here). A bug in any one feature can no longer take the whole server
+  process, and every open file's language support, down with it — and a
+  failure is now visible without hunting through logs for it. The
+  file-watcher re-index path gets the same treatment, logged (not
+  toasted, since it fires routinely on ordinary file changes) so an
+  unexpected failure there isn't silently swallowed either.
+- Actually applied the "real-codebase smoke testing" practice the
+  previous entry named but didn't yet do: indexed all 176 real files from
+  the user's codebase into one `ProjectIndex` and ran diagnostics + hover
+  (at every few lines) + document symbols over every one of them, not
+  just this one crash's exact repro. That single pass found a **second**
+  real bug beyond the one from the stack trace: `hover.ts`'s doc-comment
+  lookup read leading `'`-comment lines from the *hovered* document using
+  a line number from the *declaring* module's AST — fine when they're the
+  same file, but for the very common case of hovering a call to a Sub
+  declared in another (often longer) file, indexing past the end of the
+  shorter file's line array threw instead of just skipping the
+  doc-comment. Fixed by only attempting the lookup when the declaration's
+  module URI matches the hovered document's, plus a bounds check inside
+  `getLeadingComment` itself as a second line of defense.
+- 4 new tests (100 total): the Const/Var resolver fix at both the
+  `ProjectIndex` level and, since that's the code path that actually
+  crashed, the `diagnostics.ts` level too; the cross-module hover
+  doc-comment crash. Re-ran the full 176-file real-codebase pass clean
+  afterward — zero errors.

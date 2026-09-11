@@ -86,6 +86,21 @@ suite('Diagnostics — Option Explicit undeclared variables', () => {
 		assert.deepStrictEqual(diags, []);
 	});
 
+	test('does not flag, or throw on, a Public Const from another standard module', () => {
+		// Regression test for a real production crash: the Option Explicit
+		// walk resolving an identifier that turned out to be a Public Const
+		// declared in a different module used to throw a TypeError instead
+		// of returning a result, taking the whole server process down.
+		const index = new ProjectIndex();
+		index.updateModule('file:///Helper.bas', 'Public Const Pi As Double = 3.14\n');
+		const diags = diagnosticsFor(
+			'Option Explicit\nSub Foo()\n    MsgBox Pi\nEnd Sub\n',
+			'file:///Caller.bas',
+			index
+		);
+		assert.deepStrictEqual(diags, []);
+	});
+
 	test('flags the target of a member access but not the member name itself', () => {
 		const diags = diagnosticsFor('Option Explicit\nSub Foo()\n    obj.Bar\nEnd Sub\n');
 		assert.strictEqual(diags.length, 1);

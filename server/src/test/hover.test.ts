@@ -67,6 +67,26 @@ suite('Hover', () => {
 		assert.ok((hover!.contents as { value: string }).value.includes('Greet()'));
 	});
 
+	test('hovering a call to a Public Sub declared much later in another (longer) file does not crash', () => {
+		// Regression test for a real production crash: the doc-comment
+		// lookup used the *hovered* document's line array but the
+		// *declaring* module's line number, so a declaration living past
+		// the end of the current (shorter) file's line count indexed off
+		// the array and threw instead of just skipping the doc-comment.
+		const index = new ProjectIndex();
+		const helperLines = ['Attribute VB_Name = "Helper"', ''];
+		for (let i = 0; i < 20; i++) {
+			helperLines.push(`' padding line ${i}`);
+		}
+		helperLines.push('Public Sub Greet()', 'End Sub', '');
+		index.updateModule('file:///Helper.bas', helperLines.join('\n'));
+
+		const { document, position } = docWithCursor('Sub Caller()\n    Gre|et\nEnd Sub\n', 'file:///Caller.bas');
+		const hover = getHover(document, position, index);
+		assert.ok(hover);
+		assert.ok((hover!.contents as { value: string }).value.includes('Greet()'));
+	});
+
 	test('returns undefined for an unresolvable identifier', () => {
 		const { document, position } = docWithCursor('Sub Foo()\n    |Bar\nEnd Sub\n');
 		assert.strictEqual(getHover(document, position, new ProjectIndex()), undefined);

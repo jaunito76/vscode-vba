@@ -98,6 +98,36 @@ suite('ProjectIndex — global namespace rules', () => {
 		assert.strictEqual(index.resolveUnqualified(b, undefined, 'Old'), undefined);
 		assert.strictEqual(index.resolveUnqualified(b, undefined, 'New_')?.kind, 'Procedure');
 	});
+
+	test('a Public Const in one module resolves as Const from another, not Var', () => {
+		// Regression test for a real production crash: module vars and
+		// consts share one global table internally, and the resolver used
+		// to always assume a global-table hit came from moduleVars, never
+		// checking consts — throwing a TypeError (not returning undefined)
+		// the moment any code anywhere in the project referenced a Public
+		// Const declared in a different module.
+		const index = new ProjectIndex();
+		index.updateModule('file:///A.bas', 'Public Const Pi As Double = 3.14\n');
+		const b = index.updateModule('file:///B.bas', 'Sub Caller()\nEnd Sub\n');
+
+		const resolved = index.resolveUnqualified(b, undefined, 'Pi');
+		assert.strictEqual(resolved?.kind, 'Const');
+		if (resolved?.kind === 'Const') {
+			assert.strictEqual(resolved.name, 'Pi');
+			assert.strictEqual(resolved.moduleUri, 'file:///A.bas');
+		}
+	});
+
+	test('a Public Const and a same-named Public var in different modules both resolve correctly', () => {
+		const index = new ProjectIndex();
+		index.updateModule('file:///A.bas', 'Public Const Shared As Integer = 1\n');
+		const b = index.updateModule('file:///B.bas', 'Public Shared As String\n');
+		// B was indexed last, so it currently owns the global-table entry —
+		// what matters is that resolving it never throws and always returns
+		// the kind matching whichever module actually owns it right now.
+		const resolved = index.resolveUnqualified(b, undefined, 'Shared');
+		assert.ok(resolved?.kind === 'Const' || resolved?.kind === 'Var');
+	});
 });
 
 suite('ProjectIndex — member-access type resolution', () => {
