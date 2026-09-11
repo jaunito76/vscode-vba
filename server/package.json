@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "main": "./out/server.js",
+  "scripts": {
+    "test:unit": "mocha -r ts-node/register/transpile-only --extension ts --ui tdd \"src/test/**/*.test.ts\" --timeout 20000"
+  },
   "dependencies": {
     "vscode-languageserver": "^10.1.1",
     "vscode-languageserver-textdocument": "^1.0.14",

@@ -62,8 +62,9 @@
     "compile": "tsc -b",
     "watch": "tsc -b -w",
     "lint": "eslint client/src server/src --ext ts",
+    "test:unit": "npm run test:unit --workspace=server",
     "pretest": "npm run compile && npm run lint",
-    "test": "vscode-test"
+    "test": "npm run test:unit && vscode-test"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",
