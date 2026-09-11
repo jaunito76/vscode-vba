@@ -51,6 +51,33 @@ remembering before the next phase builds on it.
     (identifier/member/index) level instead of the full expression grammar, and by
     adding explicit paren-less call-argument parsing.
 
-## Phase 2 — Rewire Document Symbols + Signature Help onto the AST — In progress
+## Phase 2 — Rewire Document Symbols + Signature Help onto the AST — Done (2026-09-11)
 
-Not started yet.
+- `documentSymbols.ts` now walks `Module.body` for `ProcedureDecl` nodes instead of
+  scanning lines with a regex; Property Get/Let/Set grouping falls out of the AST
+  directly. Symbol ranges now span the whole procedure (declaration through its
+  matching `End`), not just the declaration line — a real improvement for outline
+  "reveal in editor" behavior, not just parity with Phase 0.
+- Added `signatureHelp.ts`: resolves the call the cursor is inside by scanning
+  tokens backward for the nearest unmatched `(`, then counts top-level commas
+  forward to the cursor for the active parameter (correctly ignores commas inside
+  nested parenthesized arguments). Signatures are re-derived per request from the
+  real AST, same-document-only scope (a project-wide index is Phase 3).
+- Added `format.ts` for signature/display-string formatting shared between both
+  features (and reusable by Hover later).
+- Registered `signatureHelpProvider` in `server.ts` and wired
+  `connection.onSignatureHelp` — this fixes a dormant bug from before this
+  rewrite even started: the original `VbaSignatureHelpProvider` was never
+  actually registered in the shipped extension (a second, unused `activate()` in
+  the old `documentSymbolProvider.ts` was the only place it was wired up), so
+  signature help never worked at all pre-migration.
+- Regression-checked against Phase 0: the extension-host integration test
+  (`sample.bas` via `vscode.executeDocumentSymbolProvider`) still passes
+  unchanged. Added 10 new fast unit tests (37 total, ~100ms).
+
+## Phase 3 — Semantic layer: project-wide symbol index — Not started
+
+Builds `projectIndex`/`moduleBinder` per the plan: workspace-wide `.bas`/`.cls`/
+`.frm` discovery, per-module symbol tables, the global-namespace merge rules
+(standard modules share one global scope; class/form members don't), and
+incremental re-indexing on change.

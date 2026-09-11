@@ -9,4 +9,5 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Initial release
 - Edit to documentSymbolProvider allowing procedure to identify proper Sub/Function/Properties and include them in the outline
 - Added the ability to keep Properties together with their letter/setter/getter
-- Rebuilding the extension around a real VBA language server (see `docs/vba-language-server-plan.md` and `docs/progress-log.md` for status); still in progress, no user-facing behavior change yet beyond document symbols now being served from the new architecture
+- Rebuilding the extension around a real VBA language server (see `docs/vba-language-server-plan.md` and `docs/progress-log.md` for status); still in progress
+- Fixed signature help (the parameter hint popup while typing a call) never actually working — it existed in code but was never registered with VS Code
