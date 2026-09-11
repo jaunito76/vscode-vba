@@ -222,3 +222,44 @@ LSP client/server architecture, a hand-rolled parser producing a full AST,
 a project-wide semantic layer, and document symbols/signature
 help/diagnostics/hover/definition/references all built on it. Completion is
 the natural next milestone.
+
+## Post-milestone-1 fix: workspace-scan crash (2026-09-11)
+
+First real manual test (F5, a real ~100K-line VBA codebase open as the
+workspace) hit `JavaScript heap out of memory` in the server process every
+time, ~30-50 seconds after launch, which the client surfaced as `Pending
+response rejected since connection got disposed` — a generic-looking error
+that gave no hint the real cause was a runaway directory walk. Root-caused
+by forking `server/out/server.js` directly with `--node-ipc` (bypassing
+VS Code entirely) and replaying the exact `initialize`/`initialized`
+handshake by hand, which reproduced a fast, clean response for a small
+folder — proving the server logic itself wasn't fundamentally broken, just
+unbounded against a large/unusual real filesystem.
+
+Two independent bugs, both in the Phase 3 workspace scan:
+
+- `server/src/workspaceScanner.ts`'s recursive walk had no symlink/junction
+  cycle detection — a self-referential link anywhere in the tree (not
+  unusual on OneDrive/SharePoint-synced folders, which this user's
+  workspace lives on) recurses forever, and since `ProjectIndex` never
+  evicts a module once added, each "new" path discovered through the cycle
+  permanently retains another full parsed AST until the heap is exhausted.
+  Fixed with an `fs.realpathSync`-based visited-directories set, plus an
+  unconditional `DEFAULT_MAX_FILES` (5000) cap as a second line of defense
+  against a workspace folder that's just genuinely far larger than the
+  actual VBA project (e.g. a huge shared drive opened as the workspace
+  root) — `window/logMessage`s a warning if the cap is hit, rather than
+  silently under-indexing.
+- Separately, and a real design mistake independent of the crash:
+  `indexWorkspaceFolder` ran synchronously inside `onInitialize`, blocking
+  the LSP handshake itself on the full scan completing. Moved to
+  `onInitialized` (the correct lifecycle point for post-handshake work per
+  the LSP spec) so a large or slow scan can never delay, or break, the
+  client's ability to talk to the server at all.
+- 4 new fast unit tests for the scanner specifically (92 total): recursive
+  discovery, skip-dir behavior, the truncation cap, and survival of an
+  actual directory junction cycle created on disk (skips itself
+  gracefully if the test environment can't create one).
+- Verified via the same manual fork-and-handshake technique used to
+  diagnose it: `initialize` now responds in ~300ms scanning this repo's
+  own folder, regardless of what the workspace scan is doing.

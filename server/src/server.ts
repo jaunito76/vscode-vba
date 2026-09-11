@@ -13,6 +13,8 @@ import {
 	ReferenceParams,
 	DidChangeWatchedFilesParams,
 	FileChangeType,
+	MessageType,
+	WorkspaceFolder,
 	TextDocumentChangeEvent
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -34,10 +36,13 @@ const documents = new TextDocuments(TextDocument);
 // definition/references (Phase 5).
 const projectIndex = new ProjectIndex();
 
+let pendingWorkspaceFolders: WorkspaceFolder[] = [];
+
 connection.onInitialize((params: InitializeParams): InitializeResult => {
-	for (const folder of params.workspaceFolders ?? []) {
-		indexWorkspaceFolder(folder.uri);
-	}
+	// Just record the folders here — actually scanning them happens in
+	// onInitialized, below, so a large workspace can never delay (or, if
+	// something goes wrong, break) the initialize handshake itself.
+	pendingWorkspaceFolders = params.workspaceFolders ?? [];
 	return {
 		capabilities: {
 			textDocumentSync: TextDocumentSyncKind.Incremental,
@@ -51,15 +56,29 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 	};
 });
 
+connection.onInitialized(() => {
+	for (const folder of pendingWorkspaceFolders) {
+		indexWorkspaceFolder(folder.uri);
+	}
+});
+
 function indexWorkspaceFolder(folderUri: string): void {
 	const rootPath = URI.parse(folderUri).fsPath;
-	for (const filePath of findVbaFiles(rootPath)) {
+	const { files, truncated } = findVbaFiles(rootPath);
+	for (const filePath of files) {
 		try {
 			const content = fs.readFileSync(filePath, 'utf8');
 			projectIndex.updateModule(URI.file(filePath).toString(), content);
 		} catch {
 			// Unreadable file (permissions, disappeared mid-scan): skip it.
 		}
+	}
+	if (truncated) {
+		connection.sendNotification('window/logMessage', {
+			type: MessageType.Warning,
+			message: `VBA: stopped scanning "${rootPath}" after finding a very large number of .bas/.cls/.frm files. ` +
+				'Some modules outside this limit will not have project-wide symbol resolution (hover/definition/references across files).'
+		});
 	}
 }
 
