@@ -9,5 +9,4 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Initial release
 - Edit to documentSymbolProvider allowing procedure to identify proper Sub/Function/Properties and include them in the outline
 - Added the ability to keep Properties together with their letter/setter/getter
-- Restructured the extension into a real VBA language server: a `client`/`server` pair talking over the Language Server Protocol (`vscode-languageclient`/`vscode-languageserver`) instead of the previous in-process, regex-based providers. Document symbols now come from the server process; a real parser and further LSP features are being layered on top module by module
-- Added a hand-rolled VBA tokenizer and recursive-descent parser (`server/src/lexer`, `server/src/parser`) producing a full AST with panic-mode error recovery, so a syntax error in one procedure no longer prevents the rest of a module from being understood. Not yet wired into any user-facing feature
+- Rebuilding the extension around a real VBA language server (see `docs/vba-language-server-plan.md` and `docs/progress-log.md` for status); still in progress, no user-facing behavior change yet beyond document symbols now being served from the new architecture
