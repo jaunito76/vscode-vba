@@ -9,15 +9,19 @@ import {
 	DocumentSymbolParams,
 	SignatureHelpParams,
 	HoverParams,
+	DefinitionParams,
+	ReferenceParams,
 	DidChangeWatchedFilesParams,
 	FileChangeType,
 	TextDocumentChangeEvent
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { URI } from 'vscode-uri';
+import { getDefinition } from './features/definition';
 import { getDiagnostics } from './features/diagnostics';
 import { getDocumentSymbols } from './features/documentSymbols';
 import { getHover } from './features/hover';
+import { getReferences } from './features/references';
 import { getSignatureHelp } from './features/signatureHelp';
 import { ProjectIndex } from './semantics/projectIndex';
 import { findVbaFiles } from './workspaceScanner';
@@ -26,8 +30,8 @@ const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
 // Kept live (workspace scan on init, debounced updates on edit, file-watcher
-// updates for unopened files); powers diagnostics and hover as of Phase 4.
-// A project-wide definition/references consumer is Phase 5.
+// updates for unopened files); powers diagnostics/hover (Phase 4) and
+// definition/references (Phase 5).
 const projectIndex = new ProjectIndex();
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
@@ -39,7 +43,10 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 			textDocumentSync: TextDocumentSyncKind.Incremental,
 			documentSymbolProvider: true,
 			signatureHelpProvider: { triggerCharacters: ['(', ','] },
-			hoverProvider: true
+			hoverProvider: true,
+			definitionProvider: true,
+			referencesProvider: true
+			// TODO(completion, milestone 2): no completionProvider capability yet.
 		}
 	};
 });
@@ -78,6 +85,22 @@ connection.onHover((params: HoverParams) => {
 		return undefined;
 	}
 	return getHover(document, params.position, projectIndex);
+});
+
+connection.onDefinition((params: DefinitionParams) => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) {
+		return undefined;
+	}
+	return getDefinition(document, params.position, projectIndex);
+});
+
+connection.onReferences((params: ReferenceParams) => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) {
+		return undefined;
+	}
+	return getReferences(document, params.position, projectIndex, params.context.includeDeclaration);
 });
 
 // Real VBA modules run thousands of lines, so re-indexing on every keystroke

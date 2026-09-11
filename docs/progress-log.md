@@ -165,4 +165,60 @@ remembering before the next phase builds on it.
 - Regression-checked against the extension-host integration test — still
   green.
 
-## Phase 5 — Go to Definition + Find References — Not started
+## Phase 5 — Go to Definition + Find References — Done (2026-09-11)
+
+This closes out the original milestone-1 scope from
+`docs/vba-language-server-plan.md`. Completion is explicitly deferred to a
+later milestone (`// TODO(completion, milestone 2)` at the
+capabilities-negotiation site in `server.ts` — no `completionProvider`
+capability declared).
+
+- Added `nameRange` to every AST node that didn't already have one
+  (`VarDecl`, `ConstDecl`, `Param`, `TypeDecl`, `EnumDecl`, `EnumMember`,
+  `MemberExpr`, `WithMemberExpr`) so "go to definition" can point at just a
+  name, not the whole declaration statement — `ProcedureDecl` already had
+  this from Phase 1. Small, mechanical parser change, but load-bearing for
+  Phase 5's whole premise of "precise range" jumps.
+- `server/src/features/resolveAtPosition.ts`: extracted from `hover.ts`
+  (unchanged behavior, verified by the existing hover tests passing
+  untouched) so Hover, Go to Definition, and Find References all resolve
+  a cursor position through the exact same local -> module -> global ->
+  member path and can never disagree about what a position refers to.
+  Also hosts `getDeclarationLocations()`, shared between Definition and
+  References' `includeDeclaration` option.
+- `server/src/features/definition.ts`: thin — resolve, then look up the
+  matching declaration's `nameRange`. Property Get/Let/Set overloads
+  return one location per overload, matching how most editors present
+  "go to definition" on an overloaded symbol.
+- `server/src/features/references.ts`: v1 project-wide AST walk per the
+  plan, matching by name case-insensitively — no reverse-reference index
+  built preemptively. A procedure-local symbol (a parameter, or a
+  Dim/Set-New found only via proc-local scope resolution, not registered
+  in the module's own symbol table) is scoped to just its own procedure
+  rather than matched by name project-wide, so an unrelated `i`/`x`/`count`
+  in some other Sub never shows up as a false reference.
+- Found a real gap while building references: the existing `forEachIdentifier`
+  walker (built for the Option Explicit check, where member names correctly
+  aren't variables) skips `MemberExpr`/`WithMemberExpr` names entirely —
+  meaning `c.Greet` was invisible to a naive reuse of that walker, and
+  "Find References" on a class member returned nothing. Fixed by
+  generalizing `astWalk.ts`'s internals to a `Visitors` object and adding
+  `forEachNameReference` (identifiers *and* member-access names) alongside
+  the original `forEachIdentifier` (identifiers only, still what
+  diagnostics.ts uses) rather than duplicating the whole tree walk.
+- Wired into `server.ts`: `definitionProvider`/`referencesProvider`
+  capabilities + `onDefinition`/`onReferences`.
+- 19 new fast unit tests (93 total), plus a new extension-host integration
+  test opening two fixture files (`helper.bas`, `caller.bas`) as separate
+  editors and confirming Go to Definition on a call in one jumps to the
+  Sub declared in the other through the live LSP connection — the
+  "Integration-test real cross-module navigation" the plan asked for
+  specifically, not just unit-level ProjectIndex coverage.
+
+## Milestone 1 complete
+
+All five phases from `docs/vba-language-server-plan.md` are done: a real
+LSP client/server architecture, a hand-rolled parser producing a full AST,
+a project-wide semantic layer, and document symbols/signature
+help/diagnostics/hover/definition/references all built on it. Completion is
+the natural next milestone.

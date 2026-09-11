@@ -1,3 +1,4 @@
+import { Range } from 'vscode-languageserver/node';
 import { Expr, IdentifierExpr, ProcedureDecl, Stmt } from './ast';
 
 /**
@@ -56,46 +57,77 @@ function collectLocalDeclarations(stmts: Stmt[], names: Set<string>): void {
 	}
 }
 
+export interface NameRef {
+	name: string;
+	range: Range;
+}
+
+interface Visitors {
+	onIdentifier: (id: IdentifierExpr) => void;
+	onMemberName?: (name: string, range: Range) => void;
+}
+
 /**
  * Visits every IdentifierExpr reachable from a statement list, including
  * assignment targets, loop variables, array bounds, and call arguments —
  * anywhere an identifier is genuinely a reference, never a declaration
  * name (declaration names are plain strings on VarDecl/ConstDecl/Param in
  * this AST, not Identifier nodes, so there's no ambiguity to filter out)
- * and never a member name (MemberExpr.name is a plain string too).
+ * and never a member name (MemberExpr.name is a separate field). Used by
+ * the Option Explicit check, where a member name is never a variable.
  */
 export function forEachIdentifier(stmts: Stmt[], visit: (id: IdentifierExpr) => void): void {
+	walkStmts(stmts, { onIdentifier: visit });
+}
+
+/**
+ * Like forEachIdentifier, but also visits member-access name sites
+ * (`target.Name`, and bare `.Name` inside a With block) — real reference
+ * sites for Find References/Go to Definition even though they're not
+ * "variables" for Option Explicit's purposes.
+ */
+export function forEachNameReference(stmts: Stmt[], visit: (ref: NameRef) => void): void {
+	walkStmts(stmts, {
+		onIdentifier: id => visit({ name: id.name, range: id.range }),
+		onMemberName: (name, range) => visit({ name, range })
+	});
+}
+
+function walkStmts(stmts: Stmt[], v: Visitors): void {
 	for (const stmt of stmts) {
-		visitStmt(stmt, visit);
+		visitStmt(stmt, v);
 	}
 }
 
-function visitExpr(expr: Expr, visit: (id: IdentifierExpr) => void): void {
+function visitExpr(expr: Expr, v: Visitors): void {
 	switch (expr.kind) {
 		case 'Identifier':
-			visit(expr);
+			v.onIdentifier(expr);
 			return;
 		case 'UnaryExpr':
-			visitExpr(expr.operand, visit);
+			visitExpr(expr.operand, v);
 			return;
 		case 'BinaryExpr':
-			visitExpr(expr.left, visit);
-			visitExpr(expr.right, visit);
+			visitExpr(expr.left, v);
+			visitExpr(expr.right, v);
 			return;
 		case 'MemberExpr':
-			visitExpr(expr.target, visit);
+			visitExpr(expr.target, v);
+			v.onMemberName?.(expr.name, expr.nameRange);
 			return;
 		case 'CallExpr':
-			visitExpr(expr.callee, visit);
+			visitExpr(expr.callee, v);
 			for (const arg of expr.args) {
-				visitExpr(arg, visit);
+				visitExpr(arg, v);
 			}
 			return;
 		case 'NamedArgExpr':
-			visitExpr(expr.value, visit);
+			visitExpr(expr.value, v);
+			return;
+		case 'WithMemberExpr':
+			v.onMemberName?.(expr.name, expr.nameRange);
 			return;
 		case 'Literal':
-		case 'WithMemberExpr':
 		case 'NewExpr':
 		case 'OmittedArgExpr':
 		case 'ErrorExpr':
@@ -103,30 +135,30 @@ function visitExpr(expr: Expr, visit: (id: IdentifierExpr) => void): void {
 	}
 }
 
-function visitStmt(stmt: Stmt, visit: (id: IdentifierExpr) => void): void {
+function visitStmt(stmt: Stmt, v: Visitors): void {
 	switch (stmt.kind) {
 		case 'AttributeStmt':
-			visitExpr(stmt.value, visit);
+			visitExpr(stmt.value, v);
 			return;
 		case 'DimStmt':
 			for (const decl of stmt.declarations) {
 				for (const bound of decl.bounds ?? []) {
 					if (bound.lower) {
-						visitExpr(bound.lower, visit);
+						visitExpr(bound.lower, v);
 					}
-					visitExpr(bound.upper, visit);
+					visitExpr(bound.upper, v);
 				}
 			}
 			return;
 		case 'ConstStmt':
 			for (const decl of stmt.declarations) {
-				visitExpr(decl.value, visit);
+				visitExpr(decl.value, v);
 			}
 			return;
 		case 'EnumDecl':
 			for (const member of stmt.members) {
 				if (member.value) {
-					visitExpr(member.value, visit);
+					visitExpr(member.value, v);
 				}
 			}
 			return;
@@ -134,80 +166,80 @@ function visitStmt(stmt: Stmt, visit: (id: IdentifierExpr) => void): void {
 		case 'EventDecl':
 			for (const param of stmt.params) {
 				if (param.defaultValue) {
-					visitExpr(param.defaultValue, visit);
+					visitExpr(param.defaultValue, v);
 				}
 			}
 			return;
 		case 'ProcedureDecl':
 			for (const param of stmt.params) {
 				if (param.defaultValue) {
-					visitExpr(param.defaultValue, visit);
+					visitExpr(param.defaultValue, v);
 				}
 			}
-			forEachIdentifier(stmt.body, visit);
+			walkStmts(stmt.body, v);
 			return;
 		case 'ReDimStmt':
 			for (const target of stmt.targets) {
-				visitExpr(target.target, visit);
+				visitExpr(target.target, v);
 			}
 			return;
 		case 'AssignStmt':
-			visitExpr(stmt.target, visit);
-			visitExpr(stmt.value, visit);
+			visitExpr(stmt.target, v);
+			visitExpr(stmt.value, v);
 			return;
 		case 'CallStmt':
-			visitExpr(stmt.expr, visit);
+			visitExpr(stmt.expr, v);
 			return;
 		case 'IfStmt':
 			for (const branch of stmt.branches) {
-				visitExpr(branch.condition, visit);
-				forEachIdentifier(branch.body, visit);
+				visitExpr(branch.condition, v);
+				walkStmts(branch.body, v);
 			}
 			if (stmt.elseBody) {
-				forEachIdentifier(stmt.elseBody, visit);
+				walkStmts(stmt.elseBody, v);
 			}
 			return;
 		case 'ForStmt':
-			visitExpr(stmt.loopVar, visit);
-			visitExpr(stmt.from, visit);
-			visitExpr(stmt.to, visit);
+			visitExpr(stmt.loopVar, v);
+			visitExpr(stmt.from, v);
+			visitExpr(stmt.to, v);
 			if (stmt.step) {
-				visitExpr(stmt.step, visit);
+				visitExpr(stmt.step, v);
 			}
-			forEachIdentifier(stmt.body, visit);
+			walkStmts(stmt.body, v);
 			return;
 		case 'ForEachStmt':
-			visitExpr(stmt.loopVar, visit);
-			visitExpr(stmt.collection, visit);
-			forEachIdentifier(stmt.body, visit);
+			visitExpr(stmt.loopVar, v);
+			visitExpr(stmt.collection, v);
+			walkStmts(stmt.body, v);
 			return;
 		case 'DoLoopStmt':
 			if (stmt.condition) {
-				visitExpr(stmt.condition, visit);
+				visitExpr(stmt.condition, v);
 			}
-			forEachIdentifier(stmt.body, visit);
+			walkStmts(stmt.body, v);
 			return;
 		case 'SelectCaseStmt':
-			visitExpr(stmt.selector, visit);
+			visitExpr(stmt.selector, v);
 			for (const caseClause of stmt.cases) {
 				for (const test of caseClause.tests ?? []) {
 					if (test.kind === 'Value' || test.kind === 'Relational') {
-						visitExpr(test.expr, visit);
+						visitExpr(test.expr, v);
 					} else {
-						visitExpr(test.from, visit);
-						visitExpr(test.to, visit);
+						visitExpr(test.from, v);
+						visitExpr(test.to, v);
 					}
 				}
-				forEachIdentifier(caseClause.body, visit);
+				walkStmts(caseClause.body, v);
 			}
 			return;
 		case 'WithStmt':
-			visitExpr(stmt.target, visit);
-			forEachIdentifier(stmt.body, visit);
+			visitExpr(stmt.target, v);
+			walkStmts(stmt.body, v);
 			return;
 		case 'RaiseEventStmt':
 			for (const arg of stmt.args) {
-				visitExpr(arg, visit);
+				visitExpr(arg, v);
 			}
 			return;
 		default:

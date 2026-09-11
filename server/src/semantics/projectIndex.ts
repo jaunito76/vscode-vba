@@ -155,7 +155,15 @@ export class ProjectIndex {
 		if (formUri) {
 			const formModule = this.modules.get(formUri);
 			if (formModule) {
-				return { kind: 'Var', name: formModule.moduleName, type: formModule.moduleName, moduleUri: formUri, decl: { name: formModule.moduleName, isArray: false, range: formModule.ast.range } };
+				return {
+					kind: 'Var',
+					name: formModule.moduleName,
+					type: formModule.moduleName,
+					moduleUri: formUri,
+					// Implicit default-instance global — there's no real declaration
+					// token to point at, so "definition" is just the top of the form module.
+					decl: { name: formModule.moduleName, nameRange: formModule.ast.range, isArray: false, range: formModule.ast.range }
+				};
 			}
 		}
 
@@ -259,7 +267,13 @@ function findDimTypeInStatements(stmts: Stmt[], upperName: string): DimTypeMatch
 			) {
 				newAssignment ??= {
 					type: stmt.value.typeName,
-					decl: { name: stmt.target.name, isArray: false, type: stmt.value.typeName, range: stmt.range }
+					decl: {
+						name: stmt.target.name,
+						nameRange: stmt.target.range,
+						isArray: false,
+						type: stmt.value.typeName,
+						range: stmt.range
+					}
 				};
 			}
 			for (const nested of getNestedBodies(stmt)) {

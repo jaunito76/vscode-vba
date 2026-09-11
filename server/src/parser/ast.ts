@@ -53,6 +53,7 @@ export interface MemberExpr {
 	kind: 'MemberExpr';
 	target: Expr;
 	name: string;
+	nameRange: Range;
 	range: Range;
 }
 
@@ -60,6 +61,7 @@ export interface MemberExpr {
 export interface WithMemberExpr {
 	kind: 'WithMemberExpr';
 	name: string;
+	nameRange: Range;
 	range: Range;
 }
 
@@ -104,6 +106,7 @@ export interface ArrayBound {
 
 export interface VarDecl {
 	name: string;
+	nameRange: Range;
 	isArray: boolean;
 	bounds?: ArrayBound[];
 	type?: string;
@@ -112,6 +115,7 @@ export interface VarDecl {
 
 export interface ConstDecl {
 	name: string;
+	nameRange: Range;
 	type?: string;
 	value: Expr;
 	range: Range;
@@ -119,12 +123,14 @@ export interface ConstDecl {
 
 export interface EnumMember {
 	name: string;
+	nameRange: Range;
 	value?: Expr;
 	range: Range;
 }
 
 export interface Param {
 	name: string;
+	nameRange: Range;
 	byRef: boolean;
 	isOptional: boolean;
 	isParamArray: boolean;
@@ -230,6 +236,7 @@ export interface TypeDecl {
 	kind: 'TypeDecl';
 	access?: string;
 	name: string;
+	nameRange: Range;
 	fields: VarDecl[];
 	range: Range;
 }
@@ -238,6 +245,7 @@ export interface EnumDecl {
 	kind: 'EnumDecl';
 	access?: string;
 	name: string;
+	nameRange: Range;
 	members: EnumMember[];
 	range: Range;
 }

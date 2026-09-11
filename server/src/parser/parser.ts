@@ -360,6 +360,7 @@ class Parser {
 	private parseOneVarDecl(): VarDecl {
 		const start = this.peek().range.start;
 		const name = this.expectIdentifierLike();
+		const nameRange = Range.create(start, this.previousEnd());
 		let isArray = false;
 		let bounds: ArrayBound[] | undefined;
 		if (this.checkPunct('(')) {
@@ -383,7 +384,7 @@ class Parser {
 			}
 			type = this.parseTypeName();
 		}
-		return { name, isArray, bounds, type, range: Range.create(start, this.previousEnd()) };
+		return { name, nameRange, isArray, bounds, type, range: Range.create(start, this.previousEnd()) };
 	}
 
 	private parseArrayBound(): ArrayBound {
@@ -464,6 +465,7 @@ class Parser {
 	private parseOneConstDecl(): ConstDecl {
 		const start = this.peek().range.start;
 		const name = this.expectIdentifierLike();
+		const nameRange = Range.create(start, this.previousEnd());
 		let type: string | undefined;
 		if (this.checkKeyword('AS')) {
 			this.advance();
@@ -471,13 +473,15 @@ class Parser {
 		}
 		this.expectPunct('=');
 		const value = this.parseExpression();
-		return { name, type, value, range: Range.create(start, this.previousEnd()) };
+		return { name, nameRange, type, value, range: Range.create(start, this.previousEnd()) };
 	}
 
 	private parseTypeDecl(access?: string): Stmt {
 		const start = this.peek().range.start;
 		this.advance(); // TYPE
+		const nameStart = this.peek().range.start;
 		const name = this.expectIdentifierLike();
+		const nameRange = Range.create(nameStart, this.previousEnd());
 		this.skipStatementSeparators();
 		const fields: VarDecl[] = [];
 		while (!this.checkKeyword('END') && !this.isAtEnd()) {
@@ -486,29 +490,32 @@ class Parser {
 		}
 		this.expectKeyword('END');
 		this.expectKeyword('TYPE');
-		return { kind: 'TypeDecl', access, name, fields, range: Range.create(start, this.previousEnd()) };
+		return { kind: 'TypeDecl', access, name, nameRange, fields, range: Range.create(start, this.previousEnd()) };
 	}
 
 	private parseEnumDecl(access?: string): Stmt {
 		const start = this.peek().range.start;
 		this.advance(); // ENUM
+		const nameStart = this.peek().range.start;
 		const name = this.expectIdentifierLike();
+		const nameRange = Range.create(nameStart, this.previousEnd());
 		this.skipStatementSeparators();
 		const members: EnumMember[] = [];
 		while (!this.checkKeyword('END') && !this.isAtEnd()) {
 			const mStart = this.peek().range.start;
 			const mName = this.expectIdentifierLike();
+			const mNameRange = Range.create(mStart, this.previousEnd());
 			let value: Expr | undefined;
 			if (this.checkPunct('=')) {
 				this.advance();
 				value = this.parseExpression();
 			}
-			members.push({ name: mName, value, range: Range.create(mStart, this.previousEnd()) });
+			members.push({ name: mName, nameRange: mNameRange, value, range: Range.create(mStart, this.previousEnd()) });
 			this.skipStatementSeparators();
 		}
 		this.expectKeyword('END');
 		this.expectKeyword('ENUM');
-		return { kind: 'EnumDecl', access, name, members, range: Range.create(start, this.previousEnd()) };
+		return { kind: 'EnumDecl', access, name, nameRange, members, range: Range.create(start, this.previousEnd()) };
 	}
 
 	private parseDeclare(access?: string): Stmt {
@@ -595,7 +602,9 @@ class Parser {
 			this.advance();
 			byRef = true;
 		}
+		const nameStart = this.peek().range.start;
 		const name = this.expectIdentifierLike();
+		const nameRange = Range.create(nameStart, this.previousEnd());
 		let isArray = false;
 		if (this.checkPunct('(')) {
 			this.advance();
@@ -613,7 +622,7 @@ class Parser {
 			defaultValue = this.parseExpression();
 		}
 		return {
-			name, byRef, isOptional, isParamArray, isArray, type, defaultValue,
+			name, nameRange, byRef, isOptional, isParamArray, isArray, type, defaultValue,
 			range: Range.create(start, this.previousEnd())
 		};
 	}
@@ -1028,8 +1037,10 @@ class Parser {
 		for (;;) {
 			if (this.checkPunct('.')) {
 				this.advance();
+				const nameStart = this.peek().range.start;
 				const name = this.expectIdentifierLike();
-				expr = { kind: 'MemberExpr', target: expr, name, range: Range.create(expr.range.start, this.previousEnd()) };
+				const nameRange = Range.create(nameStart, this.previousEnd());
+				expr = { kind: 'MemberExpr', target: expr, name, nameRange, range: Range.create(expr.range.start, this.previousEnd()) };
 				continue;
 			}
 			if (this.checkPunct('(')) {
@@ -1083,8 +1094,10 @@ class Parser {
 		}
 		if (t.kind === 'Punctuation' && t.value === '.') {
 			this.advance();
+			const nameStart = this.peek().range.start;
 			const name = this.expectIdentifierLike();
-			return { kind: 'WithMemberExpr', name, range: Range.create(t.range.start, this.previousEnd()) };
+			const nameRange = Range.create(nameStart, this.previousEnd());
+			return { kind: 'WithMemberExpr', name, nameRange, range: Range.create(t.range.start, this.previousEnd()) };
 		}
 		if (t.kind === 'Keyword' && t.value === 'NEW') {
 			this.advance();
