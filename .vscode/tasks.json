@@ -29,7 +29,7 @@
 			"group": "build",
 			"problemMatcher": [],
 			"label": "npm: compile",
-			"detail": "tsc -p ./"
+			"detail": "tsc -b"
 		}
 	]
 }

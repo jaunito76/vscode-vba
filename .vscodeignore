@@ -1,3 +1,13 @@
 **/*.ts
 **/tsconfig.json
+client/src/**
+server/src/**
+client/out/test/**
+.vscode-test.mjs
+.vscode/**
+.vscode-test/**
+node_modules/vba-client
+node_modules/vba-client/**
+node_modules/vba-server
+node_modules/vba-server/**
 !file.ts
