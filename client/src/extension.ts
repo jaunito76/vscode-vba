@@ -21,13 +21,19 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 	};
 
+	// Lets the server's project-wide symbol index stay current for files
+	// changed on disk while not open in an editor (e.g. edited outside VS
+	// Code, or a VBA IDE export/import round-trip).
+	const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.{bas,cls,frm}');
+
 	const clientOptions: LanguageClientOptions = {
-		documentSelector: [{ language: 'vba' }]
+		documentSelector: [{ language: 'vba' }],
+		synchronize: { fileEvents: fileWatcher }
 	};
 
 	client = new LanguageClient('vba', 'VBA Language Server', serverOptions, clientOptions);
 
-	context.subscriptions.push({ dispose: () => client.stop() });
+	context.subscriptions.push(fileWatcher, { dispose: () => client.stop() });
 	client.start();
 }
 

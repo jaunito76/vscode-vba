@@ -75,9 +75,47 @@ remembering before the next phase builds on it.
   (`sample.bas` via `vscode.executeDocumentSymbolProvider`) still passes
   unchanged. Added 10 new fast unit tests (37 total, ~100ms).
 
-## Phase 3 — Semantic layer: project-wide symbol index — Not started
+## Phase 3 — Semantic layer: project-wide symbol index — Done (2026-09-11)
 
-Builds `projectIndex`/`moduleBinder` per the plan: workspace-wide `.bas`/`.cls`/
-`.frm` discovery, per-module symbol tables, the global-namespace merge rules
-(standard modules share one global scope; class/form members don't), and
-incremental re-indexing on change.
+- `server/src/semantics/{symbols,moduleBinder,projectIndex}.ts`: `bindModule()`
+  parses one module and extracts its local symbol table (procedures keyed by
+  name with Get/Let/Set arrays for overloads, module vars, consts, types,
+  enums — all keyed upper-case for case-insensitive lookup, original casing
+  preserved on the declaration node for display). Also honors `Attribute
+  VB_Name` as the module's true name, preferred over the file's base name.
+- `ProjectIndex` implements the global-namespace rules explicitly: `.bas`
+  Public members merge into one project-wide table (Private stays
+  module-local, verified reachable from *within* its own module but not from
+  others); `.cls` members never enter the global table, only reachable via
+  `resolveMember(type, name)`; `.frm` gets the same treatment plus an
+  implicit default-instance global named after the form (`UserForm1.Show`
+  with no `Dim`/`New`, the extremely common real-world pattern).
+- Member-access type resolution (`findDeclaredType`) walks an entire
+  procedure body — not just its top level, since VBA has no block scoping —
+  for the nearest `Dim`/parameter/`Set x = New` for a name. A typed `Dim`
+  always wins; an untyped `Dim` followed later by `Set x = New Type` still
+  resolves correctly rather than stopping at the first, type-less match.
+  Deliberately narrow beyond that: no type inference, no default-member
+  resolution, no `Implements` polymorphism — an unresolvable type/member
+  yields nothing rather than guessing.
+- Wired into `server.ts` and kept genuinely live: workspace-wide scan on
+  `initialize` (`workspaceScanner.ts`, plain recursive `fs.readdirSync` — no
+  VBA project-file equivalent exists, so "the project" is every
+  `.bas`/`.cls`/`.frm` under the workspace folder), debounced (~300ms,
+  "latest wins") re-index on open-document edits, and
+  `connection.onDidChangeWatchedFiles` re-indexing files changed on disk
+  while not open — the client registers the matching
+  `createFileSystemWatcher('**/*.{bas,cls,frm}')` and hands it to the
+  `LanguageClient` via `synchronize.fileEvents`.
+- **Not yet consumed by any feature** — Document Symbols and Signature Help
+  still work standalone per-document, unchanged. The index becomes load-
+  bearing in Phase 4 (diagnostics/hover) and Phase 5 (definition/references).
+- 15 new fast unit tests (52 total, ~130ms), all against small in-memory
+  synthetic multi-module projects — no filesystem, no VS Code host. Found one
+  test-authoring bug while writing them (not a product bug): a fixture wrote
+  invalid VBA (`Private Dim x As Integer` — VBA never combines the two), which
+  the parser's permissive-by-design grammar happily accepted as garbage
+  instead of the intended declaration, silently corrupting the rest of that
+  test's assertions.
+
+## Phase 4 — Diagnostics (syntax + Option Explicit) + Hover — Not started
