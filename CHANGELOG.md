@@ -11,3 +11,5 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Added the ability to keep Properties together with their letter/setter/getter
 - Rebuilding the extension around a real VBA language server (see `docs/vba-language-server-plan.md` and `docs/progress-log.md` for status); still in progress
 - Fixed signature help (the parameter hint popup while typing a call) never actually working — it existed in code but was never registered with VS Code
+- Added hover: hovering a Sub/Function/Property, variable, constant, type, or enum now shows its signature/declared type, including across modules for class/form members reached via `.` access
+- Added diagnostics for syntax errors, and for undeclared variables in modules that use `Option Explicit` (conservatively — see `docs/progress-log.md` for what it deliberately doesn't flag yet, like most host application object model members)

@@ -8,13 +8,16 @@ import {
 	TextDocumentSyncKind,
 	DocumentSymbolParams,
 	SignatureHelpParams,
+	HoverParams,
 	DidChangeWatchedFilesParams,
 	FileChangeType,
 	TextDocumentChangeEvent
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { URI } from 'vscode-uri';
+import { getDiagnostics } from './features/diagnostics';
 import { getDocumentSymbols } from './features/documentSymbols';
+import { getHover } from './features/hover';
 import { getSignatureHelp } from './features/signatureHelp';
 import { ProjectIndex } from './semantics/projectIndex';
 import { findVbaFiles } from './workspaceScanner';
@@ -23,8 +26,8 @@ const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
 // Kept live (workspace scan on init, debounced updates on edit, file-watcher
-// updates for unopened files) but not yet consumed by any feature — that
-// starts in Phase 4 (diagnostics/hover) and Phase 5 (definition/references).
+// updates for unopened files); powers diagnostics and hover as of Phase 4.
+// A project-wide definition/references consumer is Phase 5.
 const projectIndex = new ProjectIndex();
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
@@ -35,7 +38,8 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 		capabilities: {
 			textDocumentSync: TextDocumentSyncKind.Incremental,
 			documentSymbolProvider: true,
-			signatureHelpProvider: { triggerCharacters: ['(', ','] }
+			signatureHelpProvider: { triggerCharacters: ['(', ','] },
+			hoverProvider: true
 		}
 	};
 });
@@ -68,6 +72,14 @@ connection.onSignatureHelp((params: SignatureHelpParams) => {
 	return getSignatureHelp(document, params.position);
 });
 
+connection.onHover((params: HoverParams) => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) {
+		return undefined;
+	}
+	return getHover(document, params.position, projectIndex);
+});
+
 // Real VBA modules run thousands of lines, so re-indexing on every keystroke
 // is debounced; "latest wins" — a pending reparse is cancelled and replaced
 // by the next edit rather than queued, so a fast typist never backs up a
@@ -86,12 +98,11 @@ documents.onDidChangeContent((change: TextDocumentChangeEvent<TextDocument>) => 
 		setTimeout(() => {
 			pendingReindex.delete(uri);
 			const document = documents.get(uri);
-			if (document) {
-				projectIndex.updateModule(uri, document.getText());
+			if (!document) {
+				return;
 			}
-			// The diagnostics themselves come from real parsing in Phase 4;
-			// this proves the publishDiagnostics round-trip in the meantime.
-			connection.sendDiagnostics({ uri, diagnostics: [] });
+			const moduleInfo = projectIndex.updateModule(uri, document.getText());
+			connection.sendDiagnostics({ uri, diagnostics: getDiagnostics(moduleInfo, projectIndex) });
 		}, REINDEX_DEBOUNCE_MS)
 	);
 });

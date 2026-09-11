@@ -1,4 +1,5 @@
 import { ProcedureDecl, Stmt } from '../parser/ast';
+import { getNestedBodies } from '../parser/astWalk';
 import { bindModule } from './moduleBinder';
 import { ModuleInfo, ResolvedSymbol } from './symbols';
 
@@ -272,20 +273,4 @@ function findDimTypeInStatements(stmts: Stmt[], upperName: string): DimTypeMatch
 		return dimResult;
 	}
 	return newAssignment ?? dimResult;
-}
-
-function getNestedBodies(stmt: Stmt): Stmt[][] {
-	switch (stmt.kind) {
-		case 'IfStmt':
-			return [...stmt.branches.map(b => b.body), ...(stmt.elseBody ? [stmt.elseBody] : [])];
-		case 'ForStmt':
-		case 'ForEachStmt':
-		case 'DoLoopStmt':
-		case 'WithStmt':
-			return [stmt.body];
-		case 'SelectCaseStmt':
-			return stmt.cases.map(c => c.body);
-		default:
-			return [];
-	}
 }

@@ -118,4 +118,51 @@ remembering before the next phase builds on it.
   instead of the intended declaration, silently corrupting the rest of that
   test's assertions.
 
-## Phase 4 — Diagnostics (syntax + Option Explicit) + Hover — Not started
+## Phase 4 — Diagnostics (syntax + Option Explicit) + Hover — Done (2026-09-11)
+
+- `server/src/parser/astWalk.ts`: a shared, reusable AST walker
+  (`forEachIdentifier`) visiting every genuine identifier *use* reachable from
+  a statement list — assignment targets, loop variables, array bounds, call
+  arguments, everything — while structurally never confusing a use with a
+  declaration name or a member name (both are plain strings on their AST
+  nodes, not `Identifier` nodes, so there's nothing to filter out). Also
+  `collectProcLocalNames`, covering params plus every `Dim`/local `Const`
+  anywhere in a procedure body (not `For`/`For Each` loop variables — VBA
+  genuinely requires those declared separately under Option Explicit).
+  `projectIndex.ts`'s own `getNestedBodies` moved here so both modules share
+  one copy.
+- `server/src/features/diagnostics.ts`: syntax diagnostics fall straight out
+  of the parser's own recovery diagnostics. The Option Explicit check only
+  runs on modules that declare it, resolves every identifier through
+  proc-locals → module scope → `ProjectIndex` globals → a curated
+  `intrinsics.ts` allowlist (~150 entries: VBA intrinsics, `vb*` constants,
+  and the handful of Office host globals real code uses constantly —
+  `Application`, `Range`, `ThisWorkbook`, etc.), and is deliberately biased
+  toward false negatives: with no host type-library import, flagging
+  legitimate host API calls would make the check unusable.
+- `server/src/features/hover.ts`: token-scan-based (same technique as
+  `signatureHelp.ts`, for consistency) rather than AST-position search —
+  finds the token under the cursor, walks backward over a `.`-separated
+  chain to detect member access, then resolves through the same
+  `ProjectIndex` local→module→global→member path diagnostics uses. Renders
+  the shared `formatSignature` in a `vba` code fence, plus any consecutive
+  `'`-comment lines immediately above a declaration as documentation (a
+  convention already common in real VBA codebases — a free win, no special
+  doc-comment syntax invented).
+- Wired into `server.ts`: `hoverProvider` capability + `connection.onHover`;
+  real diagnostics now ride the existing debounced re-index path instead of
+  publishing an empty array.
+- 22 new fast unit tests (74 total, ~180ms). Caught one real gap while
+  writing them: `findDeclaredType`'s proc-local scan only recognized `Dim`,
+  not a local `Const` — meaning `Const Pi = 3.14` followed by using `Pi`
+  would have been a false-positive "variable not defined" under Option
+  Explicit. Fixed via `collectProcLocalNames` treating `Const` the same as
+  `Dim`. Also hit (and had to work around, not fix) a real quirk of the LSP
+  type surface: `Diagnostic.message` is typed `string | MarkupContent`, not
+  plain `string`, even though every message this feature ever constructs is
+  a literal string — tests narrow with a small `msg()` helper rather than
+  casting inline everywhere.
+- Regression-checked against the extension-host integration test — still
+  green.
+
+## Phase 5 — Go to Definition + Find References — Not started
