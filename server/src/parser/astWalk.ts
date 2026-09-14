@@ -181,6 +181,12 @@ function visitStmt(stmt: Stmt, v: Visitors): void {
 		case 'ReDimStmt':
 			for (const target of stmt.targets) {
 				visitExpr(target.target, v);
+				for (const bound of target.bounds ?? []) {
+					if (bound.lower) {
+						visitExpr(bound.lower, v);
+					}
+					visitExpr(bound.upper, v);
+				}
 			}
 			return;
 		case 'AssignStmt':

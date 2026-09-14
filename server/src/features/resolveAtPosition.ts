@@ -96,6 +96,8 @@ export function getDeclarationLocations(result: PositionResolution): Location[] 
 			return [Location.create(resolved.moduleUri, resolved.decl.nameRange)];
 		case 'Enum':
 			return [Location.create(resolved.moduleUri, resolved.decl.nameRange)];
+		case 'Module':
+			return [Location.create(resolved.moduleUri, resolved.range)];
 		case 'Param': {
 			const upper = resolved.name.toUpperCase();
 			const param = proc?.params.find(p => p.name.toUpperCase() === upper);

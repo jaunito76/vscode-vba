@@ -1,3 +1,4 @@
+import { Range } from 'vscode-languageserver/node';
 import { ConstDecl, EnumDecl, Module, ParseDiagnostic, ProcedureDecl, TypeDecl, VarDecl } from '../parser/ast';
 
 export type ModuleType = 'standard' | 'class' | 'form';
@@ -50,4 +51,6 @@ export type ResolvedSymbol =
 	| { kind: 'Const'; name: string; moduleUri: string; decl: ConstDecl }
 	| { kind: 'Type'; name: string; moduleUri: string; decl: TypeDecl }
 	| { kind: 'Enum'; name: string; moduleUri: string; decl: EnumDecl }
-	| { kind: 'Param'; name: string; type?: string };
+	| { kind: 'Param'; name: string; type?: string }
+	/** A standard (.bas) module referenced by its own name — legal VBA for disambiguating a call (`ModuleName.Foo`) when more than one module declares `Foo`. No real declaration token to point at, so "definition" is just the top of the module. */
+	| { kind: 'Module'; name: string; moduleUri: string; range: Range };

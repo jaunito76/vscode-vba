@@ -2,6 +2,8 @@ import { Position, Range } from 'vscode-languageserver/node';
 import { KEYWORDS, Token, TokenKind } from './tokens';
 
 const NUMBER_SUFFIX = new Set(['%', '&', '!', '#', '@']);
+/** Legacy BASIC type-declaration characters valid directly after an identifier (`Environ$`, `x%`, `y#`). Excludes `!` — see scanIdentifierOrKeyword. */
+const IDENT_SUFFIX = new Set(['$', '%', '&', '#', '@']);
 const TWO_CHAR_OPS = ['<=', '>=', '<>'];
 
 /**
@@ -18,6 +20,7 @@ export class Lexer {
 	private line = 0;
 	private character = 0;
 	private atStatementStart = true;
+	private pendingSpaceBefore = false;
 	private readonly tokens: Token[] = [];
 
 	constructor(text: string) {
@@ -26,7 +29,7 @@ export class Lexer {
 
 	tokenize(): Token[] {
 		for (;;) {
-			this.skipTrivia();
+			this.pendingSpaceBefore = this.skipTrivia();
 
 			if (this.isAtEnd()) {
 				this.pushRange('EOF', '', '', this.currentPos(), this.currentPos());
@@ -96,13 +99,16 @@ export class Lexer {
 		return this.tokens;
 	}
 
-	private skipTrivia(): void {
+	/** Returns whether any inline space (or a line continuation, which is itself introduced by one) was consumed before the next token. */
+	private skipTrivia(): boolean {
+		let hadSpace = false;
 		for (;;) {
 			let sawSpace = false;
 			while (!this.isAtEnd() && this.isInlineSpace(this.peekChar())) {
 				this.advanceChar();
 				sawSpace = true;
 			}
+			hadSpace = hadSpace || sawSpace;
 
 			if (sawSpace && this.isLineContinuationUnderscore()) {
 				this.advanceChar(); // '_'
@@ -115,6 +121,7 @@ export class Lexer {
 
 			break;
 		}
+		return hadSpace;
 	}
 
 	private isLineContinuationUnderscore(): boolean {
@@ -143,6 +150,19 @@ export class Lexer {
 		if (upper === 'REM' && this.atStatementStart) {
 			this.skipToEndOfLine();
 			return;
+		}
+
+		// Legacy BASIC type-declaration suffix (`Environ$`, `Dim x%`) — part
+		// of the source token but not the identifier's identity, so it's
+		// consumed here without joining `text`/`value` (same treatment as
+		// the brackets around a `[Name]` bracketed identifier below). `!` is
+		// excluded from IDENT_SUFFIX and handled specially: it's ambiguous
+		// with the bang member-access operator (`rst!field`), so it's only
+		// swallowed as a suffix when NOT immediately followed by another
+		// identifier.
+		const suffix = this.peekChar();
+		if (IDENT_SUFFIX.has(suffix) || (suffix === '!' && !this.isIdentStart(this.peekChar(1)))) {
+			this.advanceChar();
 		}
 
 		const kind: TokenKind = KEYWORDS.has(upper) ? 'Keyword' : 'Identifier';
@@ -310,7 +330,8 @@ export class Lexer {
 	}
 
 	private pushRange(kind: TokenKind, text: string, value: string, start: Position, end: Position): void {
-		this.tokens.push({ kind, text, value, range: Range.create(start, end) });
+		this.tokens.push({ kind, text, value, range: Range.create(start, end), spaceBefore: this.pendingSpaceBefore });
+		this.pendingSpaceBefore = false;
 	}
 
 	private currentPos(): Position {

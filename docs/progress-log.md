@@ -431,3 +431,149 @@ Verified directly against the exact file that triggered the report:
 procedures found (was 3), `PushCallStack` included. Added 2 new parser
 tests (100 total) and re-ran the full 176-file real-codebase pipeline
 pass clean.
+
+## Post-milestone-1 fix: a systematic sweep of real-world syntax and resolver gaps (2026-09-14)
+
+The user reported a string of false "Variable not defined" diagnostics
+against real code (`ActiveWindow`, a module name used to qualify a call,
+`vbBlack`, `xlEdgeBottom`/`xlNone`/`xlUp`, `Intersect`) and separately
+flagged that "tokenization is broken across the repo." Rather than fixing
+each report one at a time, ran the full 176-file real-codebase pass (same
+technique as every fix above) specifically measuring *parse* diagnostics
+this time, not just crashes — and found 1255 of them across 101 of the 176
+files, the large majority from a handful of genuinely unrecognized real
+VBA constructs rather than one-off bugs.
+
+**Parser/lexer fixes**, roughly in order of how many files they touched:
+
+- The `.cls`/`.frm` designer metadata header every VB-IDE-exported file
+  opens with (`VERSION 1.0 CLASS` / `Begin ... End`, nested once per child
+  control on a form) had zero grammar support at all — it was being parsed
+  as if it were real VBA, which reliably broke on the property block's
+  `"file.frx":NNNN` binary-blob-offset syntax. Affected essentially every
+  `.cls` file (50 of 51) and several `.frm` files. Fixed by skipping the
+  whole header at the token level in a new `skipDesignerHeader()`, since
+  none of it is executable code.
+- Conditional compilation (`#If`/`#ElseIf`/`#Else`/`#End If`/`#Const`) had
+  no support either — `#` fell through to a stray punctuation token, and
+  the `If`/`Else`/`End If`-shaped text around it got picked up as a *real*
+  `If` statement, corrupting nesting for everything after it. Fixed by
+  treating each directive line as a no-op and letting every branch's
+  statements flow through as ordinary sequential code (this server doesn't
+  evaluate compile-time constants, so there's no real branch to pick).
+  That alone wasn't enough for the common early/late-binding idiom of
+  giving the *same* procedure two alternate headers across `#If`/`#Else`
+  with one shared body after `#End If` (`shov_*.bas`, 8 files) — the
+  second header was being parsed as bogus nested code inside the first
+  branch's body, so the outer procedure's own `End Function` was never
+  found. `parseProcedureBody` now recognizes that shape structurally (a
+  `#Else`/`#ElseIf` immediately followed by another declaration of the
+  same name) and skips the alternate header instead.
+- Real VBA disambiguates `Foo(a, b)` (call syntax) from `Foo (a), b, c` (a
+  paren-less statement call whose first argument happens to be
+  parenthesized — extremely common with `MsgBox`) purely by whether
+  there's a space before the `(`. Nothing tracked that adjacency before, so
+  the space-preceded form always got misparsed as a one-argument call,
+  silently dropping every argument after the first comma. Added
+  `Token.spaceBefore` (set in the lexer's `skipTrivia`) and a
+  `parsePostfix({ allowSpacedCall: false })` mode used only for a
+  statement's initial target — the same ambiguity applies to a spaced
+  `.member` too (`flight.PutList .Range(...), other:=x`, a bare
+  With-implicit member as the first argument), so that's gated on the same
+  flag.
+- A batch of smaller real constructs with no support at all: legacy
+  BASIC type-declaration suffixes directly after an identifier
+  (`Environ$`, `Dim x%` — added to the lexer, deliberately excluding `!`
+  since `rst!field` needs it as the bang operator instead, disambiguated
+  by whether an identifier immediately follows); the `!` "bang"
+  member-access operator itself (`rst!Field`, common on DAO/ADO
+  recordsets — parses to the same `MemberExpr`/`WithMemberExpr` nodes `.`
+  does, since nothing downstream needs to tell them apart); `Name old As
+  new` (file rename, not previously recognized as a statement at all);
+  `ReDim x(0 To n)`'s explicit lower bound (was routed through generic
+  call-argument parsing, which doesn't know `To`; now shares `ArrayBound`
+  parsing with `Dim`, added to `ReDimTarget` the same way `Dim` already
+  had it); a reserved word as a named-argument name (`.Add
+  Type:=msoControlPopup` — real Office APIs have parameters literally
+  named after keywords); a dotted per-member `Attribute` name
+  (`Attribute ShortName.VB_Description = "..."`, which the VB IDE emits
+  for Property/Sub/Function-level attributes); `Not` used as an operand of
+  a tighter operator (`"found=" & Not (x Is Nothing)` — VBA's `Not` sits
+  at a looser precedence tier than concatenation, so it was only ever
+  recognized at the very top of a fresh expression parse, never reachable
+  once already inside a `&`/`+`/etc. chain; now also recognized at the
+  tight/unary tier, same as unary minus); and a single-line `If cond
+  Then:` with nothing before the colon (an empty statement — legal VBA,
+  `parseSimpleStatementList` only skipped a colon *after* a statement, not
+  a leading one).
+- `EXPLICIT`/`BASE`/`COMPARE` were unconditionally reserved keywords, but
+  none of the three is actually reserved in real VBA outside of `Option
+  Explicit`/`Option Base`/`Option Compare` specifically — real code has
+  its own `Function Compare(...)` (a very natural name for a comparison
+  method) and `Compare = True` inside it, which used to make every
+  identifier token literally spelled "Compare" a keyword, breaking the
+  whole function. Removed from the lexer's `KEYWORDS`; `parseOption` now
+  matches them contextually by token text instead of token kind.
+
+Beyond the 1255 parse diagnostics, this also fixed two project-wide
+resolver gaps found by re-running the full diagnostics pass (not just
+parsing) against the same 176 files:
+
+- A standard module referenced by its own name to qualify a call
+  (`B_CustomerRetrieval.GetCustomer(...)`, real VBA for disambiguating
+  when more than one module declares the same procedure name) resolved to
+  nothing — `ProjectIndex.resolveUnqualified` never checked module names
+  at all. Added a `Module` `ResolvedSymbol` kind (standard modules only;
+  a `.cls` isn't addressable by name without `New`, and a form's own name
+  already resolves to its more-useful implicit-instance `Var`).
+- `Declare` statements (`Private Declare PtrSafe Function OpenClipboard
+  Lib "user32.dll" (...) As LongPtr`, i.e. any Win32 API declaration —
+  very common real-world VBA) were never registered into a module's
+  procedures map at all, so calling one always looked undefined, even
+  from within its own declaring module. `moduleBinder` now registers a
+  `DeclareStmt` the same way as a `ProcedureDecl`, via a small synthetic
+  wrapper (empty body, everything else copied over) that every existing
+  consumer — hover, references, `ProjectIndex`'s global merge for `Public`
+  Declares — already handles for free. Needed `DeclareStmt.nameRange`,
+  which Phase 5's "add `nameRange` everywhere" pass had missed.
+
+**Option Explicit allowlist**: re-running full diagnostics (not just
+parsing) surfaced the user's originally-reported false positives plus a
+much bigger one by volume — `Me` alone accounted for 2068 of 3710 total
+"variable not defined" warnings across the corpus, since it wasn't in
+`intrinsics.ts` at all (every class module's `Me.Whatever` was flagged).
+Added `Me`, `Null`, `Debug`, `Run`, `Dir`/`Kill`/`FreeFile` and the rest of
+the file-system intrinsics, `Load`/`Unload`, `WorksheetFunction`,
+`ActiveWindow`, `Intersect`/`Union`, `CurrentProject`, the `vb*` color
+constants, and the small fixed set of `vbext_ct_*` VBIDE constants.
+
+For the open-ended tail — Excel alone has 1500+ enum constants across ~50
+enums (`XlBordersIndex`, `XlDirection`, `XlCalculation`, ...), Word and
+Access add their own, and no local list will ever be complete — asked the
+user how they wanted it handled rather than guessing: hardcode more names
+forever, add a naming-convention heuristic (`xl`/`vb`/`wd`/`ac`/`mso`/
+`dao`/`ad`/`fm`/`rtf`/`pp`/`ol` + an immediate uppercase letter, e.g.
+`xlEdgeBottom`), or both. Chose both, plus the user's own refinement: a
+name that's enum-constant-*shaped* but not in the exact list gets a
+`DiagnosticSeverity.Information` notice ("looks like a host constant,
+verify the spelling") instead of the full Warning — still surfaced (so a
+real typo like `xlUpp` isn't silently swallowed), just not presented with
+the same confidence as a name that resolves nowhere at all.
+
+Re-ran the full 176-file pass after every fix, tightening the loop each
+time: 1255 → 74 parse diagnostics after the designer-header/directive/
+spaced-call fixes, → 14 after the smaller construct-specific ones (all 14
+remaining are confirmed genuine bugs in the source itself — e.g. `If Page
+= > 2 Then`, a real typo for `>=`, and two instances of a multi-line
+statement where only the first line was commented out, which live VBA
+doesn't support either since `'` comments can't be continued with `_` —
+correctly left as diagnostics, not parser bugs). Semantic "variable not
+defined" warnings dropped from 3710 to 991 (plus 1271 now-downgraded
+Information notices) after the resolver and intrinsics fixes; almost all
+of the remaining 991 trace to one un-related, genuine syntax typo in
+`AD_Navy.bas` corrupting everything parsed after it in that one file.
+28 new tests (151 total): lexer coverage for the type-suffix/bang
+disambiguation and `spaceBefore`, parser coverage for every construct
+above, `ProjectIndex` coverage for the module-name and `Declare`
+resolution fixes, and diagnostics coverage for the intrinsics/severity
+changes.

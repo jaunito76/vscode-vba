@@ -140,8 +140,10 @@ export interface Param {
 	range: Range;
 }
 
+/** `target` is just the bare callee (identifier or member chain) — its array bounds parse separately into `bounds` (same shape as VarDecl's, supporting `ReDim x(0 To 5)`'s explicit lower bound) rather than as a plain CallExpr's args, since a bound's `To` isn't valid expression-grammar syntax. */
 export interface ReDimTarget {
 	target: Expr;
+	bounds?: ArrayBound[];
 	type?: string;
 	range: Range;
 }
@@ -189,7 +191,8 @@ export type Stmt =
 	| GoToStmt
 	| ResumeStmt
 	| RaiseEventStmt
-	| FileIOStmt;
+	| FileIOStmt
+	| CompilerDirectiveStmt;
 
 /** Wraps a span of tokens skipped during panic-mode error recovery. */
 export interface ErrorStatement {
@@ -256,6 +259,7 @@ export interface DeclareStmt {
 	access?: string;
 	procKind: 'SUB' | 'FUNCTION';
 	name: string;
+	nameRange: Range;
 	lib: string;
 	alias?: string;
 	params: Param[];
@@ -389,8 +393,11 @@ export interface ResumeStmt {
 }
 
 /**
- * VBA's file I/O statements: Open/Close and the #-file-number-prefixed
- * Print/Write/Input/Line Input/Get/Put. There's no downstream feature that
+ * VBA's file I/O statements: Open/Close, the #-file-number-prefixed
+ * Print/Write/Input/Line Input/Get/Put, and Name (`Name old As new`, a
+ * file rename/move — grouped in here too since it's the same "no
+ * downstream feature needs deep structure" shape, just without a `#`).
+ * There's no downstream feature that
  * needs deep structure here (no diagnostics/hover/definition cares what's
  * inside an Open statement) — `exprs` just holds every sub-expression
  * (path, file number, record length, output values, ...) in source order,
@@ -399,8 +406,14 @@ export interface ResumeStmt {
  */
 export interface FileIOStmt {
 	kind: 'FileIOStmt';
-	op: 'OPEN' | 'CLOSE' | 'PRINT' | 'WRITE' | 'INPUT' | 'LINE_INPUT' | 'GET' | 'PUT';
+	op: 'OPEN' | 'CLOSE' | 'PRINT' | 'WRITE' | 'INPUT' | 'LINE_INPUT' | 'GET' | 'PUT' | 'NAME';
 	exprs: Expr[];
+	range: Range;
+}
+
+/** `#If`/`#ElseIf`/`#Else`/`#End If`/`#Const` — conditional compilation. Not evaluated; a pure no-op marker so the statements in every branch still parse as ordinary sequential code. See parser.ts's parseCompilerDirective. */
+export interface CompilerDirectiveStmt {
+	kind: 'CompilerDirectiveStmt';
 	range: Range;
 }
 

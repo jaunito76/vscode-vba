@@ -105,6 +105,33 @@ suite('Lexer', () => {
 		assert.strictEqual(tokens[0].value, '_First');
 	});
 
+	test('strips a legacy type-declaration suffix from an identifier, keeping it out of text/value', () => {
+		const tokens = nonTrivia(tokenize('Environ$("TEMP")'));
+		assert.strictEqual(tokens[0].kind, 'Identifier');
+		assert.strictEqual(tokens[0].text, 'Environ');
+		assert.strictEqual(tokens[0].value, 'Environ');
+	});
+
+	test('treats "!" immediately before another identifier as bang member access, not a type suffix', () => {
+		const tokens = nonTrivia(tokenize('rst!field'));
+		assert.deepStrictEqual(tokens.map(t => t.text), ['rst', '!', 'field']);
+	});
+
+	test('treats a trailing "!" not followed by an identifier as a type-declaration suffix', () => {
+		const tokens = nonTrivia(tokenize('Dim x!'));
+		assert.deepStrictEqual(tokens.map(t => t.text), ['Dim', 'x']);
+	});
+
+	test('marks spaceBefore on a token only when whitespace actually preceded it', () => {
+		const tokens = nonTrivia(tokenize('Foo(1) Bar (2)'));
+		const parenAfterFoo = tokens[1];
+		assert.strictEqual(parenAfterFoo.text, '(');
+		assert.strictEqual(parenAfterFoo.spaceBefore, false);
+		const parenAfterBar = tokens[5];
+		assert.strictEqual(parenAfterBar.text, '(');
+		assert.strictEqual(parenAfterBar.spaceBefore, true);
+	});
+
 	test('emits an EOF token even for empty input', () => {
 		const tokens = tokenize('');
 		assert.strictEqual(tokens.length, 1);

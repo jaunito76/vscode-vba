@@ -2,7 +2,7 @@ import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver/node';
 import { collectProcLocalNames, forEachIdentifier } from '../parser/astWalk';
 import { ProjectIndex } from '../semantics/projectIndex';
 import { ModuleInfo } from '../semantics/symbols';
-import { INTRINSICS } from './intrinsics';
+import { INTRINSICS, looksLikeHostEnumConstant } from './intrinsics';
 
 export function getDiagnostics(moduleInfo: ModuleInfo, projectIndex: ProjectIndex): Diagnostic[] {
 	return [...getSyntaxDiagnostics(moduleInfo), ...getOptionExplicitDiagnostics(moduleInfo, projectIndex)];
@@ -42,6 +42,22 @@ function getOptionExplicitDiagnostics(moduleInfo: ModuleInfo, projectIndex: Proj
 					return;
 				}
 				if (projectIndex.resolveUnqualified(moduleInfo, proc, id.name)) {
+					return;
+				}
+				// Not in the exact allowlist, but shaped like a host/VBA
+				// enum constant (xlEdgeBottom, wdAlignParagraphCenter, ...)
+				// — Excel alone has 1500+ of these, so a lower-severity
+				// diagnostic instead of the full Warning: still surfaced
+				// (including a real typo of one, e.g. `xlUpp`), just not
+				// presented with the same confidence as a name that
+				// resolves nowhere at all.
+				if (looksLikeHostEnumConstant(id.name)) {
+					diagnostics.push({
+						severity: DiagnosticSeverity.Information,
+						range: id.range,
+						message: `'${id.name}' looks like a host/VBA enum constant but isn't in the known list — verify the spelling`,
+						source: 'vba'
+					});
 					return;
 				}
 				diagnostics.push({

@@ -115,6 +115,30 @@ suite('Diagnostics — Option Explicit undeclared variables', () => {
 		assert.ok(names.some(n => n.includes('n')));
 		assert.ok(names.some(n => n.includes('i')));
 	});
+
+	test('does not flag Me, Debug, or a standard module referenced by name to qualify a call', () => {
+		const index = new ProjectIndex();
+		index.updateModule('file:///B_CustomerRetrieval.bas', 'Public Function GetCustomer(id As String) As Long\nEnd Function\n');
+		const diags = diagnosticsFor(
+			'Option Explicit\nSub Foo()\n    Debug.Print Me.Name\n    B_CustomerRetrieval.GetCustomer("x")\nEnd Sub\n',
+			'file:///Caller.bas',
+			index
+		);
+		assert.deepStrictEqual(diags, []);
+	});
+
+	test('downgrades an unrecognized host-enum-shaped constant (xl*/vb*/...) to Information instead of Warning', () => {
+		const diags = diagnosticsFor('Option Explicit\nSub Foo()\n    Dim x As Long\n    x = xlEdgeBottom\nEnd Sub\n');
+		assert.strictEqual(diags.length, 1);
+		assert.strictEqual(diags[0].severity, 3); // DiagnosticSeverity.Information
+		assert.ok(msg(diags[0]).includes('xlEdgeBottom'));
+	});
+
+	test('still flags (at Warning) a name that is not enum-constant-shaped and does not resolve', () => {
+		const diags = diagnosticsFor('Option Explicit\nSub Foo()\n    Dim x As Long\n    x = totallyUnknownVar\nEnd Sub\n');
+		assert.strictEqual(diags.length, 1);
+		assert.strictEqual(diags[0].severity, 2); // DiagnosticSeverity.Warning
+	});
 });
 
 // bindModule sanity check reused here for clarity of intent, not duplication

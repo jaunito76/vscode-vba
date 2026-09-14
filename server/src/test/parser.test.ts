@@ -323,4 +323,178 @@ suite('Parser', () => {
 		assert.strictEqual(procedures(module.body).length, procCount);
 		assert.ok(elapsedMs < 2000, `expected parse of a ${lines.length}-line module to take well under the debounce window, took ${elapsedMs}ms`);
 	});
+
+	test('skips a .cls/.frm designer header (VERSION/BEGIN...END, nested) before real code', () => {
+		const source =
+			'VERSION 1.0 CLASS\n' +
+			'BEGIN\n' +
+			'  MultiUse = -1\n' +
+			'  Begin VB.CommandButton cmdOK\n' +
+			'    Caption = "OK"\n' +
+			'  End\n' +
+			'END\n' +
+			'Attribute VB_Name = "Class1"\n' +
+			'Public Sub Foo()\n' +
+			'End Sub\n';
+		const { module, diagnostics } = parse(source);
+		assert.deepStrictEqual(diagnostics, []);
+		assert.deepStrictEqual(procedures(module.body).map(p => p.name), ['Foo']);
+	});
+
+	test('flattens self-contained #If/#Else branches (each with its own full header+body+End) as sequential declarations', () => {
+		const source =
+			'#If VBA7 Then\n' +
+			'Public Function GetPtr(ByVal p As LongPtr) As Object\n' +
+			'    Set GetPtr = Nothing\n' +
+			'End Function\n' +
+			'#Else\n' +
+			'Public Function GetPtr(ByVal p As Long) As Object\n' +
+			'    Set GetPtr = Nothing\n' +
+			'End Function\n' +
+			'#End If\n';
+		const { module, diagnostics } = parse(source);
+		assert.deepStrictEqual(diagnostics, []);
+		assert.strictEqual(procedures(module.body).length, 2);
+	});
+
+	test('shares one body between #If/#Else header-only branches (early/late-binding idiom)', () => {
+		// Regression test: each branch supplies only an alternate *header* for
+		// the same procedure (no body statements before #Else/#End If); the
+		// real, shared body lives once after #End If. Without special
+		// handling, the alternate header parses as bogus nested code inside
+		// the first branch's body, and the outer Function never finds its own
+		// matching End Function.
+		const source =
+			'#If EarlyBind = True Then\n' +
+			'Public Function GetIt() As Scripting.FileSystemObject\n' +
+			'    Debug.Print "early"\n' +
+			'#Else\n' +
+			'Public Function GetIt() As Object\n' +
+			'#End If\n' +
+			'    Set GetIt = Nothing\n' +
+			'End Function\n';
+		const { module, diagnostics } = parse(source);
+		assert.deepStrictEqual(diagnostics, []);
+		const [proc] = procedures(module.body);
+		assert.strictEqual(proc.name, 'GetIt');
+		// Whichever header is reached first (top-to-bottom) is "the"
+		// declaration in effect; the alternate header in the other branch is
+		// the one skipped. Which branch "wins" isn't semantically meaningful
+		// here (no #If condition is actually evaluated) — what matters is
+		// that exactly one header applies and the shared body attaches to it.
+		assert.strictEqual(proc.returnType, 'Scripting.FileSystemObject');
+		assert.ok(proc.body.some(s => s.kind === 'AssignStmt'));
+	});
+
+	test('parses a paren-less statement call whose first argument is itself parenthesized', () => {
+		// `MsgBox ("text"), buttons, title` — the space before `(` means this
+		// is NOT call syntax; `("text")` is just a parenthesized first
+		// argument of a normal paren-less call, with more arguments after it.
+		const { module, diagnostics } = parse('MsgBox ("hello"), vbExclamation, "Title"\n');
+		assert.deepStrictEqual(diagnostics, []);
+		const stmt = module.body[0];
+		assert.strictEqual(stmt.kind, 'CallStmt');
+		if (stmt.kind === 'CallStmt') {
+			assert.strictEqual(stmt.expr.kind, 'CallExpr');
+			if (stmt.expr.kind === 'CallExpr') {
+				assert.strictEqual(stmt.expr.args.length, 3);
+			}
+		}
+	});
+
+	test('parses a paren-less statement call whose first argument is a spaced bare .member (implicit With target)', () => {
+		const { module, diagnostics } = parse(
+			'Sub S()\n' +
+			'With Target\n' +
+			'    flight.PutList .Range(.Cells(1, 2), .Cells(3, 4)), DayOnly:=False\n' +
+			'End With\n' +
+			'End Sub\n'
+		);
+		assert.deepStrictEqual(diagnostics, []);
+	});
+
+	test('parses ReDim with an explicit lower bound ("0 To N")', () => {
+		const { module, diagnostics } = parse('ReDim arr(0 To 5)\nReDim Preserve arr(0 To UBound(arr) + 1)\n');
+		assert.deepStrictEqual(diagnostics, []);
+		const redim = module.body[0];
+		assert.strictEqual(redim.kind, 'ReDimStmt');
+		if (redim.kind === 'ReDimStmt') {
+			assert.strictEqual(redim.targets[0].bounds?.[0].lower?.kind, 'Literal');
+		}
+	});
+
+	test('parses the Name...As... file rename statement', () => {
+		const { module, diagnostics } = parse('Name oldPath As newPath\n');
+		assert.deepStrictEqual(diagnostics, []);
+		assert.strictEqual(module.body[0].kind, 'FileIOStmt');
+	});
+
+	test('does not treat "Name" used as an ordinary identifier as the Name statement', () => {
+		const { module, diagnostics } = parse('x = Name\n');
+		assert.deepStrictEqual(diagnostics, []);
+		assert.strictEqual(module.body[0].kind, 'AssignStmt');
+	});
+
+	test('accepts a leading/doubled colon (empty statement) in a single-line If', () => {
+		const { module, diagnostics } = parse('Sub S()\nIf x = 0 Then: Exit Sub\nEnd Sub\n');
+		assert.deepStrictEqual(diagnostics, []);
+		const [proc] = procedures(module.body);
+		const ifStmt = proc.body[0];
+		assert.strictEqual(ifStmt.kind, 'IfStmt');
+		if (ifStmt.kind === 'IfStmt') {
+			assert.strictEqual(ifStmt.branches[0].body[0].kind, 'ExitStmt');
+		}
+	});
+
+	test('parses "Not" as a tight unary operator nested inside a concatenation, not just at its own precedence tier', () => {
+		const { module, diagnostics } = parse('x = "found=" & Not (y Is Nothing)\n');
+		assert.deepStrictEqual(diagnostics, []);
+	});
+
+	test('parses bang member access (rst!Field) the same as dot access', () => {
+		const { module, diagnostics } = parse('x = rst!Field\n');
+		assert.deepStrictEqual(diagnostics, []);
+		const stmt = module.body[0];
+		assert.strictEqual(stmt.kind, 'AssignStmt');
+		if (stmt.kind === 'AssignStmt') {
+			assert.strictEqual(stmt.value.kind, 'MemberExpr');
+			if (stmt.value.kind === 'MemberExpr') {
+				assert.strictEqual(stmt.value.name, 'Field');
+			}
+		}
+	});
+
+	test('treats EXPLICIT/BASE/COMPARE as ordinary identifiers outside of Option', () => {
+		// None of the three is actually a reserved word in real VBA — only
+		// meaningful directly after "Option". A user Function/variable named
+		// Compare (a very natural name for a comparison method) must still
+		// parse as a normal declaration and assignment target.
+		const { module, diagnostics } = parse(
+			'Option Compare Binary\n' +
+			'Option Base 1\n' +
+			'Option Explicit\n' +
+			'Function Compare(a As Long) As Boolean\n' +
+			'    Compare = True\n' +
+			'End Function\n'
+		);
+		assert.deepStrictEqual(diagnostics, []);
+		const options = module.body.filter(s => s.kind === 'OptionStmt');
+		assert.deepStrictEqual(options.map(o => (o as { name: string }).name), ['COMPARE', 'BASE', 'EXPLICIT']);
+		assert.deepStrictEqual(procedures(module.body).map(p => p.name), ['Compare']);
+	});
+
+	test('accepts a dotted (per-member) Attribute name', () => {
+		const { module, diagnostics } = parse('Attribute ShortName.VB_Description = "Gets or sets the short name"\n');
+		assert.deepStrictEqual(diagnostics, []);
+		const attr = module.body[0];
+		assert.strictEqual(attr.kind, 'AttributeStmt');
+		if (attr.kind === 'AttributeStmt') {
+			assert.strictEqual(attr.name, 'ShortName.VB_Description');
+		}
+	});
+
+	test('accepts a reserved word as a named-argument name (Type:=)', () => {
+		const { diagnostics } = parse('customMenu.Controls.Add Type:=msoControlPopup, Before:=1\n');
+		assert.deepStrictEqual(diagnostics, []);
+	});
 });

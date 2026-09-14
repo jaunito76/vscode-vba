@@ -42,12 +42,66 @@ class Parser {
 		const start = this.peek().range.start;
 		const body: Stmt[] = [];
 		this.skipStatementSeparators();
+		this.skipDesignerHeader();
 		while (!this.isAtEnd()) {
 			body.push(this.parseStatement());
 			this.skipStatementSeparators();
 		}
 		const module: Module = { kind: 'Module', body, range: Range.create(start, this.previousEnd()) };
 		return { module, diagnostics: this.diagnostics };
+	}
+
+	/**
+	 * VB IDE-exported `.cls`/`.frm` files open with a designer metadata
+	 * block — `VERSION x.xx [CLASS]`, then (for `.frm`, and always for
+	 * `.cls`) a `Begin ... End` property list, nested once per child
+	 * control on a form — before the real code starts at `Attribute
+	 * VB_Name`. None of it is executable VBA grammar (property values
+	 * include GUID literals and the designer's own `"file.frx":NNNN`
+	 * binary-blob-offset syntax), so it's skipped wholesale at the token
+	 * level rather than parsed. Neither `VERSION` nor `BEGIN` is a
+	 * reserved word — this only fires when one is literally the first
+	 * token of the file, so it can't misfire on real code using either as
+	 * an identifier.
+	 */
+	private skipDesignerHeader(): void {
+		if (this.peek().kind === 'Identifier' && this.peek().text.toUpperCase() === 'VERSION') {
+			while (!this.check('NewLine') && !this.isAtEnd()) {
+				this.advance();
+			}
+			this.skipStatementSeparators();
+		}
+		if (this.peek().kind === 'Identifier' && this.peek().text.toUpperCase() === 'BEGIN') {
+			let depth = 0;
+			do {
+				const t = this.advance();
+				if (t.kind === 'Identifier' && t.text.toUpperCase() === 'BEGIN') {
+					depth++;
+				} else if (t.kind === 'Keyword' && t.value === 'END') {
+					depth--;
+				}
+			} while (depth > 0 && !this.isAtEnd());
+			this.skipStatementSeparators();
+		}
+	}
+
+	/**
+	 * Conditional compilation (`#If`/`#ElseIf`/`#Else`/`#End If`/`#Const`).
+	 * Not evaluated — there's no compile-time constant environment to
+	 * resolve `#If Win64 Then` against, and every downstream feature just
+	 * wants to see the code in each branch, so the directive line itself is
+	 * skipped and the statements inside every branch are parsed as plain
+	 * sequential statements (indistinguishable from an ordinary `If`
+	 * block's body, just without the block-stop-keyword nesting `#End If`
+	 * would otherwise require).
+	 */
+	private parseCompilerDirective(): Stmt {
+		const start = this.peek().range.start;
+		this.advance(); // '#'
+		while (!this.check('NewLine') && !this.check('Colon') && !this.isAtEnd()) {
+			this.advance();
+		}
+		return { kind: 'CompilerDirectiveStmt', range: Range.create(start, this.previousEnd()) };
 	}
 
 	// ---- token cursor helpers -------------------------------------------------
@@ -83,6 +137,12 @@ class Parser {
 	private checkKeyword(word: string): boolean {
 		const t = this.peek();
 		return t.kind === 'Keyword' && t.value === word;
+	}
+
+	/** Like checkKeyword, but also matches a plain Identifier token with this text — for words (EXPLICIT/BASE/COMPARE) that are only reserved contextually, not globally. */
+	private checkContextualWord(word: string): boolean {
+		const t = this.peek();
+		return (t.kind === 'Keyword' || t.kind === 'Identifier') && t.text.toUpperCase() === word;
 	}
 
 	private checkPunct(p: string): boolean {
@@ -184,12 +244,19 @@ class Parser {
 			) {
 				return this.parseLineInputStatement();
 			}
+			if (upper === 'NAME' && this.looksLikeNameStatement()) {
+				return this.parseNameStatement();
+			}
 
 			return this.parseExpressionStatement();
 		}
 
-		if (t.kind === 'Punctuation' && t.value === '.') {
+		if (t.kind === 'Punctuation' && (t.value === '.' || t.value === '!')) {
 			return this.parseExpressionStatement();
+		}
+
+		if (t.kind === 'Punctuation' && t.value === '#') {
+			return this.parseCompilerDirective();
 		}
 
 		if (t.kind !== 'Keyword') {
@@ -248,6 +315,11 @@ class Parser {
 
 	private parseSimpleStatementList(): Stmt[] {
 		const body: Stmt[] = [];
+		// A leading (or doubled) colon is an empty statement — legal VBA,
+		// most commonly seen right after a single-line `If cond Then:`.
+		while (this.check('Colon')) {
+			this.advance();
+		}
 		for (;;) {
 			if (this.check('NewLine') || this.isAtEnd() || this.checkKeyword('ELSE')) {
 				break;
@@ -258,7 +330,9 @@ class Parser {
 				this.advance();
 			}
 			if (this.check('Colon')) {
-				this.advance();
+				while (this.check('Colon')) {
+					this.advance();
+				}
 				continue;
 			}
 			break;
@@ -275,7 +349,15 @@ class Parser {
 	// check below ever sees it.
 	private parseExpressionStatement(): Stmt {
 		const start = this.peek().range.start;
-		const target = this.parsePostfix();
+		// `allowSpacedCall: false` — a paren-less statement call whose first
+		// argument is itself parenthesized (`MsgBox ("text"), vbExclamation,
+		// "title"`) is extremely common real-world VBA. Real VBA
+		// disambiguates this from true call syntax (`Foo(a, b)`) purely on
+		// whether there's a space before the `(`; without that check here,
+		// parsePostfix would greedily swallow `("text")` as a one-argument
+		// call, leaving the target's kind as CallExpr (not Identifier) and
+		// silently dropping every argument after the first comma.
+		const target = this.parsePostfix({ allowSpacedCall: false });
 
 		if (this.checkPunct('=')) {
 			this.advance();
@@ -323,7 +405,14 @@ class Parser {
 	private parseAttribute(): Stmt {
 		const start = this.peek().range.start;
 		this.advance(); // ATTRIBUTE
-		const name = this.expectIdentifierLike();
+		// Usually a bare module-level name (`VB_Name`), but the VB IDE also
+		// exports per-member attributes as a dotted name (`ShortName.VB_
+		// Description`, right after a Property/Sub/Function declaration).
+		let name = this.expectIdentifierLike();
+		while (this.checkPunct('.')) {
+			this.advance();
+			name += '.' + this.expectIdentifierLike();
+		}
 		this.expectPunct('=');
 		const value = this.parseExpression();
 		return { kind: 'AttributeStmt', name, value, range: Range.create(start, this.previousEnd()) };
@@ -333,16 +422,16 @@ class Parser {
 		const start = this.peek().range.start;
 		this.advance(); // OPTION
 		let name = 'UNKNOWN';
-		if (this.checkKeyword('EXPLICIT')) {
+		if (this.checkContextualWord('EXPLICIT')) {
 			this.advance();
 			name = 'EXPLICIT';
-		} else if (this.checkKeyword('BASE')) {
+		} else if (this.checkContextualWord('BASE')) {
 			this.advance();
 			name = 'BASE';
 			if (!this.check('NewLine') && !this.check('Colon') && !this.isAtEnd()) {
 				this.advance();
 			}
-		} else if (this.checkKeyword('COMPARE')) {
+		} else if (this.checkContextualWord('COMPARE')) {
 			this.advance();
 			name = 'COMPARE';
 			if (!this.check('NewLine') && !this.check('Colon') && !this.isAtEnd()) {
@@ -574,7 +663,9 @@ class Parser {
 		} else {
 			this.error("Expected 'Sub' or 'Function'", this.peek().range);
 		}
+		const nameStart = this.peek().range.start;
 		const name = this.expectIdentifierLike();
+		const nameRange = Range.create(nameStart, this.previousEnd());
 		this.expectKeyword('LIB');
 		const lib = this.check('String') ? this.advance().value : (this.error('Expected library name string', this.peek().range), '');
 		let alias: string | undefined;
@@ -589,7 +680,7 @@ class Parser {
 			returnType = this.parseTypeName();
 		}
 		return {
-			kind: 'DeclareStmt', access, procKind, name, lib, alias, params, returnType,
+			kind: 'DeclareStmt', access, procKind, name, nameRange, lib, alias, params, returnType,
 			range: Range.create(start, this.previousEnd())
 		};
 	}
@@ -685,7 +776,7 @@ class Parser {
 			returnType = this.parseTypeName();
 		}
 		this.skipStatementSeparators();
-		const body = this.parseBlockBody(['END']);
+		const body = this.parseProcedureBody(name);
 		this.expectKeyword('END');
 		if (this.checkKeyword('SUB') || this.checkKeyword('FUNCTION') || this.checkKeyword('PROPERTY')) {
 			this.advance();
@@ -694,6 +785,100 @@ class Parser {
 			kind: 'ProcedureDecl', procKind, propertyKind, access, isStatic, name, nameRange, params, returnType, body,
 			range: Range.create(start, this.previousEnd())
 		};
+	}
+
+	/**
+	 * Like parseBlockBody(['END']), but also recognizes the early/late-
+	 * binding idiom: `#If X Then \n Function Foo() As A \n <maybe some
+	 * body> \n #Else \n Function Foo() As B \n #End If \n <shared body> \n
+	 * End Function` — each #If branch re-declares this SAME procedure's
+	 * *header* with a different signature, and the real body is shared,
+	 * living once after #End If (unlike the equally common case of each
+	 * branch holding a complete, self-contained procedure — header, body,
+	 * and its own End — which the compiler-directive no-op in
+	 * parseStatementInner already handles fine by just flattening both
+	 * branches through as sequential declarations of the same name).
+	 * Detected structurally at each `#Else`/`#ElseIf` encountered while
+	 * parsing this procedure's body: does the line right after it start
+	 * another Sub/Function/Property declaration named `name`? If so, that
+	 * alternate header (and everything up to the matching `#End If`) is
+	 * redundant — we already parsed the header actually in effect for this
+	 * call — so it's skipped as raw tokens rather than parsed as a
+	 * (nonsensical) nested declaration.
+	 */
+	private parseProcedureBody(name: string): Stmt[] {
+		const upperName = name.toUpperCase();
+		const body: Stmt[] = [];
+		for (;;) {
+			this.skipStatementSeparators();
+			if (this.isAtEnd() || this.currentIsKeyword(['END'])) {
+				break;
+			}
+			if (this.checkDirectiveWord('ELSEIF', 'ELSE') && this.looksLikeAlternateHeaderAfterDirective(upperName)) {
+				this.skipToMatchingEndIf();
+				continue;
+			}
+			const before = this.pos;
+			body.push(this.parseStatement());
+			if (this.pos === before) {
+				this.error(`Unexpected token '${this.peek().text}'`, this.peek().range);
+				this.advance();
+			}
+		}
+		return body;
+	}
+
+	/** True if the current token is `#` followed by a Keyword matching one of `words` — e.g. checkDirectiveWord('ELSE') matches `#Else`. */
+	private checkDirectiveWord(...words: string[]): boolean {
+		if (!this.checkPunct('#')) {
+			return false;
+		}
+		const next = this.peekAt(1);
+		return next.kind === 'Keyword' && words.includes(next.value);
+	}
+
+	private static readonly ACCESS_WORDS = ['PUBLIC', 'PRIVATE', 'FRIEND', 'GLOBAL', 'STATIC'];
+	private static readonly PROC_KIND_WORDS = ['SUB', 'FUNCTION', 'PROPERTY'];
+
+	/** Pure lookahead (no consumption): does the logical line right after the `#Else`/`#ElseIf` under the cursor start a Sub/Function/Property declaration named `expectedUpperName`? */
+	private looksLikeAlternateHeaderAfterDirective(expectedUpperName: string): boolean {
+		let i = 1; // skip past '#'
+		while (this.peekAt(i).kind !== 'NewLine' && this.peekAt(i).kind !== 'EOF') {
+			i++;
+		}
+		i++; // past the NewLine, onto the next logical line
+		while (Parser.ACCESS_WORDS.includes(this.peekAt(i).value) && this.peekAt(i).kind === 'Keyword') {
+			i++;
+		}
+		const kindTok = this.peekAt(i);
+		if (kindTok.kind !== 'Keyword' || !Parser.PROC_KIND_WORDS.includes(kindTok.value)) {
+			return false;
+		}
+		i++;
+		if (this.peekAt(i).kind === 'Keyword' && ['GET', 'LET', 'SET'].includes(this.peekAt(i).value)) {
+			i++;
+		}
+		const nameTok = this.peekAt(i);
+		return (nameTok.kind === 'Identifier' || nameTok.kind === 'Keyword') && nameTok.text.toUpperCase() === expectedUpperName;
+	}
+
+	/** Skips raw tokens up to and including a `#End If` at the same nesting depth as the `#Else`/`#ElseIf`/`#End If` the caller just found (depth 0 = that one) — see parseProcedureBody's use for why. */
+	private skipToMatchingEndIf(): void {
+		let depth = 0;
+		while (!this.isAtEnd()) {
+			if (this.checkDirectiveWord('IF')) {
+				depth++;
+			} else if (this.checkDirectiveWord('END') && this.peekAt(2).kind === 'Keyword' && this.peekAt(2).value === 'IF') {
+				if (depth === 0) {
+					this.advance(); // '#'
+					this.advance(); // END
+					this.advance(); // IF
+					return;
+				}
+				depth--;
+			}
+			this.advance();
+		}
 	}
 
 	private parseIf(): Stmt {
@@ -964,15 +1149,46 @@ class Parser {
 		return { kind: 'ReDimStmt', preserve, targets, range: Range.create(start, this.previousEnd()) };
 	}
 
+	/**
+	 * Parses `name(bounds)` (optionally `.member(bounds)`, optionally
+	 * repeated — `ReDim` can resize a member array too) with the array
+	 * bounds read via parseArrayBound, same as Dim, instead of through
+	 * parsePostfix's generic call-args parsing: a bound's explicit lower
+	 * form (`ReDim x(0 To 5)`) uses the `To` keyword, which isn't valid
+	 * expression grammar and would otherwise abort argument parsing.
+	 */
 	private parseReDimTarget(): ReDimTarget {
 		const start = this.peek().range.start;
-		const target = this.parsePostfix();
+		// The callee: an identifier/member chain, deliberately not through
+		// parsePostfix so it stops right before the bounds' '(' instead of
+		// consuming it as a call.
+		let target: Expr = this.parsePrimary();
+		while (this.checkPunct('.') || this.checkPunct('!')) {
+			this.advance();
+			const nameStart = this.peek().range.start;
+			const name = this.expectIdentifierLike();
+			const nameRange = Range.create(nameStart, this.previousEnd());
+			target = { kind: 'MemberExpr', target, name, nameRange, range: Range.create(target.range.start, this.previousEnd()) };
+		}
+		let bounds: ArrayBound[] | undefined;
+		if (this.checkPunct('(')) {
+			this.advance();
+			bounds = [];
+			if (!this.checkPunct(')')) {
+				bounds.push(this.parseArrayBound());
+				while (this.checkPunct(',')) {
+					this.advance();
+					bounds.push(this.parseArrayBound());
+				}
+			}
+			this.expectPunct(')');
+		}
 		let type: string | undefined;
 		if (this.checkKeyword('AS')) {
 			this.advance();
 			type = this.parseTypeName();
 		}
-		return { target, type, range: Range.create(start, this.previousEnd()) };
+		return { target, bounds, type, range: Range.create(start, this.previousEnd()) };
 	}
 
 	// ---- file I/O -----------------------------------------------------------
@@ -1025,6 +1241,28 @@ class Parser {
 			exprs.push(this.parseExpression());
 		}
 		return { kind: 'FileIOStmt', op: 'OPEN', exprs, range: Range.create(start, this.previousEnd()) };
+	}
+
+	/** True if a top-level `As` keyword appears before this logical line ends — distinguishes the `Name oldpath As newpath` statement (renames/moves a file) from a user's own identically-named procedure/variable. */
+	private looksLikeNameStatement(): boolean {
+		for (let i = 1; ; i++) {
+			const t = this.peekAt(i);
+			if (t.kind === 'NewLine' || t.kind === 'Colon' || t.kind === 'EOF') {
+				return false;
+			}
+			if (t.kind === 'Keyword' && t.value === 'AS') {
+				return true;
+			}
+		}
+	}
+
+	private parseNameStatement(): Stmt {
+		const start = this.peek().range.start;
+		this.advance(); // NAME
+		const exprs: Expr[] = [this.parseExpression()]; // old path
+		this.expectKeyword('AS');
+		exprs.push(this.parseExpression()); // new path
+		return { kind: 'FileIOStmt', op: 'NAME', exprs, range: Range.create(start, this.previousEnd()) };
 	}
 
 	private parseCloseStatement(): Stmt {
@@ -1160,6 +1398,21 @@ class Parser {
 			const operand = this.parseUnaryMinus();
 			return { kind: 'UnaryExpr', op: t.value, operand, range: Range.create(t.range.start, this.previousEnd()) };
 		}
+		// `Not` also recognized here, tightly binding like unary minus, not
+		// just up at parseNot's own (looser, real-VBA-spec) precedence tier
+		// between And and comparisons. That tier alone only ever fires for
+		// a *freshly started* expression (an `If`/`And`/statement-initial
+		// parse always descends through parseNot first) — it can never be
+		// reached for `Not` appearing as an *operand* of a tighter operator
+		// partway through precedence climbing, e.g. the extremely common
+		// `"label: " & Not (x Is Nothing)`, where by the time concatenation
+		// parses its right operand, recursion is already down at this
+		// level and would otherwise never see `Not` as valid at all.
+		if (this.checkKeyword('NOT')) {
+			const t = this.advance();
+			const operand = this.parseUnaryMinus();
+			return { kind: 'UnaryExpr', op: 'NOT', operand, range: Range.create(t.range.start, this.previousEnd()) };
+		}
 		return this.parseExponent();
 	}
 
@@ -1173,10 +1426,28 @@ class Parser {
 		return left;
 	}
 
-	private parsePostfix(): Expr {
+	/**
+	 * `allowSpacedCall: false` (only passed from parseExpressionStatement's
+	 * statement-initial target) refuses to consume a `(` preceded by
+	 * whitespace as call-args syntax — see that call site for why.
+	 * Everywhere else (general expression parsing, nested arguments,
+	 * assignment targets) a space before `(` is just style and always means
+	 * a real call/index, so the default stays permissive.
+	 */
+	private parsePostfix(opts: { allowSpacedCall?: boolean } = {}): Expr {
+		const allowSpacedCall = opts.allowSpacedCall ?? true;
 		let expr = this.parsePrimary();
 		for (;;) {
-			if (this.checkPunct('.')) {
+			// `.` and `!` (VBA's "bang" notation, e.g. `rst!FieldName` on a
+			// DAO/ADO Recordset) are both member access syntactically — same
+			// AST node either way, since nothing downstream (resolution,
+			// hover, references) needs to tell them apart. Same spacing
+			// caveat as the '(' case below: a *space* before '.'/'!' at
+			// statement-initial position means "start of the next
+			// paren-less argument" (very often a bare `.Member` implicitly
+			// off the enclosing With target, e.g. `flight.PutNavyList
+			// .Range(...), other:=x`), not "continue this member chain".
+			if ((this.checkPunct('.') || this.checkPunct('!')) && (allowSpacedCall || !this.peek().spaceBefore)) {
 				this.advance();
 				const nameStart = this.peek().range.start;
 				const name = this.expectIdentifierLike();
@@ -1184,7 +1455,7 @@ class Parser {
 				expr = { kind: 'MemberExpr', target: expr, name, nameRange, range: Range.create(expr.range.start, this.previousEnd()) };
 				continue;
 			}
-			if (this.checkPunct('(')) {
+			if (this.checkPunct('(') && (allowSpacedCall || !this.peek().spaceBefore)) {
 				const args = this.parseArgList();
 				expr = { kind: 'CallExpr', callee: expr, args, range: Range.create(expr.range.start, this.previousEnd()) };
 				continue;
@@ -1213,7 +1484,11 @@ class Parser {
 			return { kind: 'OmittedArgExpr', range: this.peek().range };
 		}
 		const start = this.peek().range.start;
-		if (this.peek().kind === 'Identifier' && this.peekAt(1).kind === 'Colon' &&
+		// The argument-name side of `name:=value` is a plain label, not a
+		// general identifier reference — real Office APIs commonly have
+		// parameters named after reserved words (`.Add Type:=msoControlPopup`
+		// on CommandBarControls), so a Keyword token is accepted here too.
+		if ((this.peek().kind === 'Identifier' || this.peek().kind === 'Keyword') && this.peekAt(1).kind === 'Colon' &&
 			this.peekAt(2).kind === 'Punctuation' && this.peekAt(2).value === '=') {
 			const name = this.advance().text;
 			this.advance(); // colon
@@ -1233,7 +1508,7 @@ class Parser {
 			this.expectPunct(')');
 			return { ...inner, range: Range.create(t.range.start, this.previousEnd()) } as Expr;
 		}
-		if (t.kind === 'Punctuation' && t.value === '.') {
+		if (t.kind === 'Punctuation' && (t.value === '.' || t.value === '!')) {
 			this.advance();
 			const nameStart = this.peek().range.start;
 			const name = this.expectIdentifierLike();

@@ -183,6 +183,20 @@ export class ProjectIndex {
 			}
 		}
 
+		// A standard module referenced by its own name — legal VBA for
+		// qualifying a call (`B_CustomerRetrieval.GetCustomer(...)`), most
+		// often to disambiguate when more than one module declares the same
+		// procedure name. Class/form modules are deliberately excluded: a
+		// `.cls` isn't addressable by name at all (no instance exists
+		// without `New`), and a form's own name is already handled above as
+		// its implicit default-instance Var, which is the more useful
+		// resolution for a bare `frmCustomer` reference than a generic
+		// "module" would be.
+		const module = this.findModuleByName(name);
+		if (module && module.moduleType === 'standard') {
+			return { kind: 'Module', name: module.moduleName, moduleUri: module.uri, range: module.ast.range };
+		}
+
 		return undefined;
 	}
 

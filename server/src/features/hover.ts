@@ -37,6 +37,8 @@ function renderHover(resolved: ResolvedSymbol, document: TextDocument): string {
 			return `\`\`\`vba\nType ${resolved.name}\n\`\`\``;
 		case 'Enum':
 			return `\`\`\`vba\nEnum ${resolved.name}\n\`\`\``;
+		case 'Module':
+			return `\`\`\`vba\nModule ${resolved.name}\n\`\`\``;
 	}
 }
 

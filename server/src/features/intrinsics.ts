@@ -31,9 +31,24 @@ export const INTRINSICS: ReadonlySet<string> = new Set([
 	// Interaction / misc
 	'MSGBOX', 'INPUTBOX', 'CREATEOBJECT', 'GETOBJECT', 'ENVIRON', 'SHELL', 'DOEVENTS',
 	'CHOOSE', 'SWITCH', 'IIF', 'CALLBYNAME', 'GETSETTING', 'SAVESETTING', 'DELETESETTING',
-	'PARTITION', 'RGB', 'QBCOLOR',
+	'PARTITION', 'RGB', 'QBCOLOR', 'RUN',
+	// File system
+	'DIR', 'KILL', 'FREEFILE', 'FILEDATETIME', 'FILELEN', 'FILECOPY', 'CURDIR', 'MKDIR',
+	'RMDIR', 'CHDIR', 'GETATTR', 'SETATTR', 'EOF', 'LOF', 'LOC',
 	// Error handling
 	'ERR', 'ERL',
+	// `Me` (implicit self-reference inside a class/form module) and `Null`
+	// (VBA's database/Variant null literal) — both reserved-word-shaped but
+	// not in the lexer's KEYWORDS, since both work everywhere an ordinary
+	// identifier/expression does (`Me.Foo`, `x = Null`), unlike a true
+	// keyword.
+	'ME', 'NULL',
+	// Form lifecycle statements (`Load frm` / `Unload Me`) — like Open/
+	// Close/Print elsewhere in this parser, not reserved keywords since a
+	// project can have its own Sub named "Load", so only the *name* is
+	// allowlisted here for the Option Explicit check, not given dedicated
+	// statement grammar.
+	'LOAD', 'UNLOAD',
 	// Common constants
 	'VBCRLF', 'VBCR', 'VBLF', 'VBTAB', 'VBBACK', 'VBFORMFEED', 'VBVERTICALTAB',
 	'VBNULLSTRING', 'VBNULLCHAR', 'VBNEWLINE', 'VBOBJECTERROR',
@@ -49,7 +64,50 @@ export const INTRINSICS: ReadonlySet<string> = new Set([
 	// Common Office host globals (Excel/Word/Access) — the most frequently
 	// used ones only; anything deeper in the object model is out of scope.
 	'APPLICATION', 'ACTIVEWORKBOOK', 'ACTIVESHEET', 'ACTIVECELL', 'ACTIVEDOCUMENT',
-	'ACTIVEPRINTER', 'THISWORKBOOK', 'THISDOCUMENT', 'WORKBOOKS', 'WORKSHEETS', 'SHEETS',
-	'RANGE', 'CELLS', 'ROWS', 'COLUMNS', 'SELECTION', 'DOCUMENTS', 'CURRENTDB',
-	'DBENGINE', 'SCREEN', 'FORMS', 'REPORTS', 'CODECONTEXTOBJECT'
+	'ACTIVEPRINTER', 'ACTIVEWINDOW', 'THISWORKBOOK', 'THISDOCUMENT', 'WORKBOOKS', 'WORKSHEETS', 'SHEETS',
+	'RANGE', 'CELLS', 'ROWS', 'COLUMNS', 'SELECTION', 'DOCUMENTS', 'CURRENTDB', 'CURRENTPROJECT',
+	'DBENGINE', 'SCREEN', 'FORMS', 'REPORTS', 'CODECONTEXTOBJECT', 'INTERSECT', 'UNION',
+	'WORKSHEETFUNCTION', 'DEBUG',
+	// vb* color constants — not prefix-heuristic-shaped the way most host
+	// enum constants are named (see looksLikeHostEnumConstant below), but
+	// common and worth spelling out exactly.
+	'VBBLACK', 'VBRED', 'VBGREEN', 'VBYELLOW', 'VBBLUE', 'VBMAGENTA', 'VBCYAN', 'VBWHITE',
+	// VBIDE (VB Extensibility) component-type constants — like the vb*
+	// colors above, a small fixed set that doesn't fit
+	// looksLikeHostEnumConstant's PascalCase-after-prefix convention
+	// (`vbext_ct_ClassModule` has a lowercase letter right after `vb`).
+	'VBEXT_CT_CLASSMODULE', 'VBEXT_CT_STDMODULE', 'VBEXT_CT_MSFORM', 'VBEXT_CT_ACTIVEXDESIGNER',
+	'VBEXT_CT_DOCUMENT'
 ]);
+
+/**
+ * Prefixes real VBA/Office enum constant members are conventionally named
+ * with (`xlEdgeBottom`, `vbExclamation`, `wdAlignParagraphCenter`,
+ * `msoControlButton`, ...). Excel alone has 1500+ such constants across
+ * ~50 enums — far too many to enumerate — so instead of trying to list
+ * them, looksLikeHostEnumConstant recognizes the *naming convention*: a
+ * short known prefix immediately followed by an uppercase letter (the
+ * PascalCase remainder), which real user identifiers essentially never
+ * happen to match by coincidence.
+ */
+// 'AD' (not 'ADO') — real ADO constants are named e.g. `adOpenStatic`,
+// `adLockReadOnly`, `adFldIsNullable`: the prefix itself is just "ad".
+const ENUM_CONSTANT_PREFIXES = ['XL', 'VB', 'WD', 'AC', 'MSO', 'DAO', 'AD', 'FM', 'RTF', 'PP', 'OL'];
+
+/**
+ * True for a bare identifier that *looks like* a host/VBA enum constant by
+ * naming convention (prefix + PascalCase remainder) but isn't in the exact
+ * INTRINSICS allowlist above. Used to downgrade, not suppress, the Option
+ * Explicit diagnostic for these — see diagnostics.ts — since the
+ * convention is a strong but not certain signal (a real user identifier
+ * could coincidentally match it, and a genuine typo of a real constant
+ * name, e.g. `xlUpp`, would otherwise go completely unflagged).
+ */
+export function looksLikeHostEnumConstant(name: string): boolean {
+	for (const prefix of ENUM_CONSTANT_PREFIXES) {
+		if (name.length > prefix.length && name.slice(0, prefix.length).toUpperCase() === prefix && /[A-Z]/.test(name[prefix.length])) {
+			return true;
+		}
+	}
+	return false;
+}

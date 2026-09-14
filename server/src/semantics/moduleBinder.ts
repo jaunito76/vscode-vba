@@ -1,3 +1,4 @@
+import { ProcedureDecl } from '../parser/ast';
 import { parse } from '../parser/parser';
 import { ModuleInfo, ModuleType } from './symbols';
 
@@ -33,16 +34,31 @@ export function bindModule(uri: string, source: string): ModuleInfo {
 					info.moduleName = stmt.value.value;
 				}
 				break;
-			case 'ProcedureDecl': {
-				const key = stmt.name.toUpperCase();
-				const list = info.procedures.get(key);
-				if (list) {
-					list.push(stmt);
-				} else {
-					info.procedures.set(key, [stmt]);
-				}
+			case 'ProcedureDecl':
+				registerProcedure(info, stmt.name, stmt);
 				break;
-			}
+			case 'DeclareStmt':
+				// An external DLL function/sub (`Declare PtrSafe Function
+				// ... Lib "..."`) is callable exactly like an ordinary
+				// procedure — same local/module/global resolution, same
+				// Option Explicit treatment — it just has no VBA body.
+				// Registering it as a synthetic ProcedureDecl (empty body)
+				// gets all of that for free from the exact same map every
+				// other consumer (hover, references, ProjectIndex's global
+				// merge) already reads.
+				registerProcedure(info, stmt.name, {
+					kind: 'ProcedureDecl',
+					procKind: stmt.procKind,
+					access: stmt.access,
+					isStatic: false,
+					name: stmt.name,
+					nameRange: stmt.nameRange,
+					params: stmt.params,
+					returnType: stmt.returnType,
+					body: [],
+					range: stmt.range
+				});
+				break;
 			case 'DimStmt':
 				for (const decl of stmt.declarations) {
 					info.moduleVars.set(decl.name.toUpperCase(), {
@@ -70,6 +86,16 @@ export function bindModule(uri: string, source: string): ModuleInfo {
 	}
 
 	return info;
+}
+
+function registerProcedure(info: ModuleInfo, name: string, decl: ProcedureDecl): void {
+	const key = name.toUpperCase();
+	const list = info.procedures.get(key);
+	if (list) {
+		list.push(decl);
+	} else {
+		info.procedures.set(key, [decl]);
+	}
 }
 
 function inferModuleType(uri: string): ModuleType {

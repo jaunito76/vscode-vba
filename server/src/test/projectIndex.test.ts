@@ -99,6 +99,47 @@ suite('ProjectIndex — global namespace rules', () => {
 		assert.strictEqual(index.resolveUnqualified(b, undefined, 'New_')?.kind, 'Procedure');
 	});
 
+	test('a standard module resolves as itself when referenced by its own name (qualifying a call)', () => {
+		// Regression test: `B_CustomerRetrieval.GetCustomer(...)` (qualifying a
+		// call to disambiguate, real and common VBA) tokenizes the module
+		// name as a plain Identifier before the MemberExpr's '.' — it used to
+		// resolve to nothing at all, a false "variable not defined".
+		const index = new ProjectIndex();
+		index.updateModule('file:///B_CustomerRetrieval.bas', 'Public Function GetCustomer(id As String) As Long\nEnd Function\n');
+		const b = index.updateModule('file:///B.bas', 'Sub Caller()\nEnd Sub\n');
+
+		const resolved = index.resolveUnqualified(b, undefined, 'B_CustomerRetrieval');
+		assert.strictEqual(resolved?.kind, 'Module');
+	});
+
+	test('a class module is not resolvable by its own name (no implicit instance without New)', () => {
+		const index = new ProjectIndex();
+		const a = index.updateModule('file:///MyClass.cls', 'Public Sub Foo()\nEnd Sub\n');
+		assert.strictEqual(index.resolveUnqualified(a, undefined, 'MyClass'), undefined);
+	});
+
+	test('a Declare\'d external function is resolvable like an ordinary procedure', () => {
+		// Regression test: DeclareStmt was never registered into the module's
+		// procedures map at all, so a Win32 API Declare — extremely common
+		// real-world VBA — always showed as "variable not defined", even when
+		// called from within its own declaring module.
+		const index = new ProjectIndex();
+		const a = index.updateModule(
+			'file:///A.bas',
+			'Private Declare PtrSafe Function OpenClipboard Lib "user32.dll" (ByVal hwnd As LongPtr) As LongPtr\n' +
+			'Sub Caller()\nEnd Sub\n'
+		);
+		const resolved = index.resolveUnqualified(a, undefined, 'OpenClipboard');
+		assert.strictEqual(resolved?.kind, 'Procedure');
+	});
+
+	test('a Public Declare is visible unqualified from another module too', () => {
+		const index = new ProjectIndex();
+		index.updateModule('file:///A.bas', 'Public Declare Function GetTickCount Lib "kernel32" () As Long\n');
+		const b = index.updateModule('file:///B.bas', 'Sub Caller()\nEnd Sub\n');
+		assert.strictEqual(index.resolveUnqualified(b, undefined, 'GetTickCount')?.kind, 'Procedure');
+	});
+
 	test('a Public Const in one module resolves as Const from another, not Var', () => {
 		// Regression test for a real production crash: module vars and
 		// consts share one global table internally, and the resolver used
